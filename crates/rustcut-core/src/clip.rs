@@ -118,11 +118,6 @@ impl Clip {
         Ok(())
     }
 
-    pub fn with_color(mut self, color: impl Into<String>) -> Self {
-        self.color = color.into();
-        self
-    }
-
     pub fn with_crop_x_offset(mut self, offset: f64) -> Self {
         self.crop_x_offset = clamp_offset(offset);
         self

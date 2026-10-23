@@ -18,6 +18,7 @@ import type {
   MediaInfo,
   ProjectState,
 } from "./types";
+import type { SourceSpec } from "./api";
 
 // ffprobe supplies the real frame rate in the Tauri build; frame stepping
 // falls back to 30 fps until then.
@@ -344,7 +345,7 @@ export default function App() {
     }
     const state = buildProjectState();
     state.export_settings.output_dir = outputDir;
-    const source = {
+    const source: SourceSpec = {
       width: media?.width ?? 1920,
       height: media?.height ?? 1080,
       bitrate_bps: media?.bitrate_bps ?? 8_000_000,

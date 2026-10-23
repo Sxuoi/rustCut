@@ -318,6 +318,25 @@ mod tests {
     }
 
     #[test]
+    fn hardware_encoders_emit_their_codec_args() {
+        let cases = [
+            (HwEncoder::Nvenc, "h264_nvenc"),
+            (HwEncoder::Amf, "h264_amf"),
+            (HwEncoder::Qsv, "h264_qsv"),
+            (HwEncoder::VideoToolbox, "h264_videotoolbox"),
+        ];
+        for (hw, codec) in cases {
+            let args = VideoEncoder::Hw(hw).codec_args();
+            assert_eq!(args[0], "-c:v");
+            assert_eq!(args[1], codec);
+            assert!(
+                args.len().is_multiple_of(2),
+                "{codec}: flags and values must pair up"
+            );
+        }
+    }
+
+    #[test]
     fn blurred_background_keeps_the_full_frame_visible() {
         let args = build_reencode_args(
             Path::new("input_video.mp4"),

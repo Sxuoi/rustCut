@@ -20,21 +20,13 @@ fn save_project(path: String, state: ProjectState) -> Result<(), String> {
     state.save_atomic(Path::new(&path)).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn app_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             load_project,
             save_project,
-            app_version,
             exporter::probe_media,
             exporter::start_export,
             exporter::waveform_peaks
