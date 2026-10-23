@@ -11,6 +11,7 @@ pub mod naming;
 pub mod probe;
 pub mod project;
 pub mod timecode;
+pub mod waveform;
 
 pub use clip::{clamp_offset, Clip, ClipError, ExportStatus};
 pub use ffmpeg::{

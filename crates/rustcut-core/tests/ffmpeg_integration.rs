@@ -202,3 +202,65 @@ fn naming_template_produces_the_expected_file_name_on_disk() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn blurred_background_export_keeps_the_full_frame_in_9_16() {
+    if !tools_present() {
+        eprintln!("ffmpeg/ffprobe not on PATH; skipping integration test");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("rustcut-it-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = make_source(&dir);
+
+    let mut state = project_for(&src, &dir);
+    state.export_settings.mode = ExportMode::SmartReencode;
+    state.export_settings.crop_style = rustcut_core::ffmpeg::CropStyle::BlurredBackground;
+
+    let plan = plan_export(
+        &state,
+        &SourceSpec {
+            width: 1920,
+            height: 1080,
+            bitrate_bps: 8_000_000.0,
+        },
+        &VideoEncoder::software_default(),
+    );
+    run_job(&plan.jobs[0].args);
+
+    let info = probe(&plan.jobs[0].output);
+    assert_eq!(info.width, 608, "9:16 window width");
+    assert_eq!(info.height, 1080, "window height");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn waveform_peaks_come_out_of_real_audio() {
+    if !tools_present() {
+        eprintln!("ffmpeg/ffprobe not on PATH; skipping integration test");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("rustcut-it-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = make_source(&dir);
+
+    let args = rustcut_core::waveform::build_waveform_args(&src, 1000);
+    let output = Command::new("ffmpeg")
+        .args(&args)
+        .output()
+        .expect("ffmpeg must run");
+    assert!(output.status.success(), "waveform decode failed");
+    let samples = rustcut_core::waveform::pcm_s16le_samples(&output.stdout);
+    assert!(
+        samples.len() > 1000,
+        "expected ~6s of audio at 1 kHz, got {}",
+        samples.len()
+    );
+    let peaks = rustcut_core::waveform::compute_peaks(&samples, 60);
+    assert_eq!(peaks.len(), 60);
+    assert!(peaks.iter().any(|p| *p > 0.0), "sine tone must register");
+    assert!(peaks.iter().all(|p| (0.0..=1.0).contains(p)));
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -20,7 +20,8 @@ const SIXTEEN_NINE: f64 = 16.0 / 9.0;
 #[serde(rename_all = "snake_case")]
 pub enum CropStyle {
     CenterCrop,
-    // BlurredBackground lands in Phase 2.
+    /// Full frame centered over a blurred 9:16 fill (PRD 4.4).
+    BlurredBackground,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,24 +166,20 @@ pub fn build_lossless_args(
 /// Filter chain: `scale` (contain fit) -> `pad` (canvas) -> `crop`
 /// (9:16 window). Dimensions are literal values computed by `canvas_dims`
 /// and `crop_x_px`, so every dimension is even and the X range is valid.
+#[allow(clippy::too_many_arguments)] // mirrors FFmpeg's own flat arg style
 pub fn build_reencode_args(
     input: &Path,
     start_sec: f64,
     end_sec: f64,
     output: &Path,
     canvas: (u32, u32),
+    crop_style: CropStyle,
     crop_x_offset: f64,
     encoder: &VideoEncoder,
 ) -> Vec<String> {
     let (w, h) = canvas;
-    let cw = crop_width_px(h);
-    let ch = h;
-    let x = crop_x_px(crop_x_offset, w, h);
-    let filter = format!(
-        "scale={w}:{h}:force_original_aspect_ratio=decrease,\
-         pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,\
-         crop={cw}:{ch}:{x}:0"
-    );
+    let out_w = crop_width_px(h);
+    let out_h = h;
 
     let mut args = vec![
         "-hide_banner".into(),
@@ -193,9 +190,40 @@ pub fn build_reencode_args(
         timecode::format_tc(end_sec),
         "-i".into(),
         path_arg(input),
-        "-vf".into(),
-        filter,
     ];
+
+    match crop_style {
+        CropStyle::CenterCrop => {
+            let x = crop_x_px(crop_x_offset, w, h);
+            let filter = format!(
+                "scale={w}:{h}:force_original_aspect_ratio=decrease,\
+                 pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,\
+                 crop={out_w}:{out_h}:{x}:0"
+            );
+            args.push("-vf".into());
+            args.push(filter);
+        }
+        CropStyle::BlurredBackground => {
+            // The full frame stays visible over a blurred fill of the same
+            // source; no canvas pad and no X offset (PRD 4.4). Output keeps
+            // the 9:16 window dimensions so both styles share one size.
+            let filter = format!(
+                "[0:v]split=2[bg][fg];\
+                 [bg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,\
+                 crop={out_w}:{out_h},boxblur=20:2,setsar=1[bgv];\
+                 [fg]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,\
+                 setsar=1[fgv];\
+                 [bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]"
+            );
+            args.push("-filter_complex".into());
+            args.push(filter);
+            args.push("-map".into());
+            args.push("[vout]".into());
+            args.push("-map".into());
+            args.push("0:a?".into());
+        }
+    }
+
     args.extend(encoder.codec_args());
     args.push("-c:a".into());
     args.push("aac".into());
@@ -269,6 +297,7 @@ mod tests {
             955.800,
             Path::new("02_Jump_Scare_React_Vertical.mp4"),
             (1920, 1080),
+            CropStyle::CenterCrop,
             0.0,
             &VideoEncoder::software_default(),
         );
@@ -286,6 +315,32 @@ mod tests {
             .windows(4)
             .any(|w| w.iter().map(String::as_str).eq(["-c:a", "aac", "-b:a", "192k"])));
         assert_eq!(args.last().unwrap(), "02_Jump_Scare_React_Vertical.mp4");
+    }
+
+    #[test]
+    fn blurred_background_keeps_the_full_frame_visible() {
+        let args = build_reencode_args(
+            Path::new("input_video.mp4"),
+            0.0,
+            2.0,
+            Path::new("out.mp4"),
+            (1920, 1080),
+            CropStyle::BlurredBackground,
+            0.5, // offset is ignored by this style
+            &VideoEncoder::software_default(),
+        );
+        let fc = args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1].clone();
+        assert!(fc.starts_with("[0:v]split=2"), "{fc}");
+        assert!(fc.contains("boxblur"), "background fill must be blurred");
+        assert!(fc.contains("overlay=(W-w)/2:(H-h)/2"), "frame must be centered");
+        assert!(fc.contains("scale=608:1080:force_original_aspect_ratio=decrease"), "full frame contained");
+        // The background crop fills the window; the foreground has no X
+        // offset at all (unlike CenterCrop's `crop=608:1080:X:0`).
+        assert!(fc.contains("crop=608:1080,boxblur"));
+        assert!(!fc.contains("crop=608:1080:"));
+        // Filtered video and optional audio are mapped explicitly.
+        assert!(args.iter().any(|a| a == "[vout]"));
+        assert!(args.iter().any(|a| a == "0:a?"));
     }
 
     #[test]

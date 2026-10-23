@@ -36,7 +36,8 @@ pub fn run() {
             save_project,
             app_version,
             exporter::probe_media,
-            exporter::start_export
+            exporter::start_export,
+            exporter::waveform_peaks
         ])
         .run(tauri::generate_context!())
         .expect("error while running RustCut");

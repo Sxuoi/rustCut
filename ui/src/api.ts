@@ -86,6 +86,18 @@ export async function probeMedia(path: string): Promise<MediaInfo> {
   return invoke<MediaInfo>("probe_media", { path });
 }
 
+/** Timeline waveform peaks in `0.0..=1.0`, one value per bucket. */
+export async function waveformPeaks(
+  path: string,
+  buckets: number,
+): Promise<number[]> {
+  if (!isTauri) {
+    throw new Error("waveform_peaks requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<number[]>("waveform_peaks", { path, buckets });
+}
+
 /** Launches the batch export; returns the number of jobs. */
 export async function startExport(
   state: ProjectState,

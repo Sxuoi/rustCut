@@ -8,6 +8,7 @@
 //! as a `failed` phase event and the remaining clips continue.
 
 use std::io::{BufRead, BufReader, Read};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 
@@ -158,6 +159,26 @@ pub fn start_export(
     });
 
     Ok(job_count)
+}
+
+/// Extracts timeline waveform peaks (PRD 4.1) by decoding the audio track
+/// to mono PCM and reducing it to `buckets` peak magnitudes.
+#[tauri::command]
+pub fn waveform_peaks(path: String, buckets: usize) -> Result<Vec<f32>, String> {
+    let args = rustcut_core::waveform::build_waveform_args(
+        Path::new(&path),
+        rustcut_core::waveform::WAVEFORM_SAMPLE_RATE,
+    );
+    let output = Command::new(resolve_tool("RUSTCUT_FFMPEG", "ffmpeg"))
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to start ffmpeg: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("waveform extraction failed: {}", stderr.trim()));
+    }
+    let samples = rustcut_core::waveform::pcm_s16le_samples(&output.stdout);
+    Ok(rustcut_core::waveform::compute_peaks(&samples, buckets))
 }
 
 fn run_ffmpeg(

@@ -136,6 +136,7 @@ pub fn plan_export(
                 clip.end_sec,
                 &output,
                 canvas,
+                settings.crop_style,
                 clip.crop_x_offset,
                 encoder,
             ),

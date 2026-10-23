@@ -9,11 +9,11 @@ import {
   probeMedia,
   saveProject,
   startExport,
+  waveformPeaks,
 } from "./api";
 import type {
   Clip,
   ExportFinishedEvent,
-  ExportMode,
   ExportProgressEvent,
   MediaInfo,
   ProjectState,
@@ -24,6 +24,11 @@ import type {
 const FPS_FALLBACK = 30;
 const COLORS = ["#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#06B6D4"];
 const SPEEDS = [0.5, 1, 1.25, 1.5, 2, 3];
+
+type Preset = "lossless_copy" | "smart_reencode" | "blurred_background";
+
+// A 9:16 window on a 16:9 box spans (9/16)^2 of that box's width.
+const OVERLAY_W_PCT = (9 / 16) ** 2 * 100;
 
 function fmtTime(secs: number): string {
   const total = Math.max(0, Math.floor(secs));
@@ -45,13 +50,18 @@ function projectPathFor(videoPath: string): string {
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const waveformRef = useRef<HTMLCanvasElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
   const [sourceName, setSourceName] = useState("");
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [outputDir, setOutputDir] = useState("");
-  const [exportMode, setExportMode] = useState<ExportMode>("lossless_copy");
+  const [preset, setPreset] = useState<Preset>("lossless_copy");
   const [progress, setProgress] = useState<Record<string, ExportProgressEvent>>({});
+  const [peaks, setPeaks] = useState<number[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportSummary, setExportSummary] = useState("");
   const [duration, setDuration] = useState(0);
@@ -88,6 +98,8 @@ export default function App() {
       setClips([]);
       setProgress({});
       setMedia(null);
+      setPeaks([]);
+      setSelectedClipId(null);
       let mediaLine = "";
       try {
         const info = await probeMedia(picked.path);
@@ -97,12 +109,24 @@ export default function App() {
       } catch (err) {
         mediaLine = `Video opened, but ffprobe failed: ${String(err)}`;
       }
+      // Waveform for the timeline (PRD 4.1); audio-less files just skip it.
+      if (isTauri) {
+        void waveformPeaks(picked.path, 1200)
+          .then(setPeaks)
+          .catch(() => setPeaks([]));
+      }
       // Crash recovery (PRD 4.5): restore saved markers when the .rustcut
       // file for this video exists; a missing file is the normal case.
       try {
         const saved = await loadProject(projectPathFor(picked.path));
         setClips(saved.clips);
-        setExportMode(saved.export_settings.mode);
+        setPreset(
+          saved.export_settings.mode === "lossless_copy"
+            ? "lossless_copy"
+            : saved.export_settings.crop_style === "blurred_background"
+              ? "blurred_background"
+              : "smart_reencode",
+        );
         setOutputDir(saved.export_settings.output_dir || "");
         setDuration((d) => d || saved.source_video.duration_sec || 0);
         setStatus(
@@ -216,6 +240,7 @@ export default function App() {
       export_status: "pending",
     };
     setClips((prev) => [...prev, clip]);
+    setSelectedClipId(clip.id);
     setMarkIn(null);
     setMarkOut(null);
     setStatus(`Added clip #${String(index).padStart(2, "0")} (${fmtDur(end - start)}).`);
@@ -241,6 +266,7 @@ export default function App() {
 
   const removeClip = useCallback((id: string) => {
     setLoopId((prev) => (prev === id ? null : prev));
+    setSelectedClipId((prev) => (prev === id ? null : prev));
     setClips((prev) => prev.filter((c) => c.id !== id).map((c, i) => ({ ...c, index: i + 1 })));
   }, []);
 
@@ -277,15 +303,15 @@ export default function App() {
       export_settings: {
         output_dir: outputDir,
         naming_pattern: "{index}_{name}",
-        mode: exportMode,
+        mode: preset === "lossless_copy" ? "lossless_copy" : "smart_reencode",
         aspect_ratio_override: null,
-        crop_style: "center_crop",
+        crop_style: preset === "blurred_background" ? "blurred_background" : "center_crop",
         crop_x_offset: 0,
         parallel_jobs: 1,
       },
       clips,
     };
-  }, [sourcePath, sourceName, duration, media, fps, outputDir, exportMode, clips]);
+  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, clips]);
 
   const save = useCallback(() => {
     // The project file lives next to the source video (PRD 4.5), so the
@@ -364,6 +390,23 @@ export default function App() {
       unsubscribe?.();
     };
   }, []);
+
+  const onOverlayDrag = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      if (!dragging || !selectedClipId || !wrapperRef.current) {
+        return;
+      }
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const cropW = (rect.width * OVERLAY_W_PCT) / 100;
+      const usable = rect.width - cropW;
+      if (usable <= 0) {
+        return;
+      }
+      const x = Math.min(Math.max(0, e.clientX - rect.left - cropW / 2), usable);
+      setCropOffset(selectedClipId, (x / usable) * 2 - 1);
+    },
+    [dragging, selectedClipId, setCropOffset],
+  );
 
   const onTimelineClick = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
@@ -454,7 +497,29 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [togglePlay, seekBy, addClip, focusLastRename, save, runExport, fps]);
 
+  // Draw the audio waveform on the timeline canvas (PRD 4.1).
+  useEffect(() => {
+    const canvas = waveformRef.current;
+    if (!canvas || peaks.length === 0) {
+      return;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#3B82F6";
+    peaks.forEach((p, i) => {
+      const h = Math.max(1, p * height);
+      ctx.fillRect(i, (height - h) / 2, 1, h);
+    });
+  }, [peaks]);
+
   const selectedCount = clips.filter((c) => c.selected_for_export).length;
+  const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
+  const overlayVisible = preset === "smart_reencode" && selectedClip !== null;
+  const cropOffset = selectedClip?.crop_x_offset ?? 0;
   const progressList = Object.values(progress);
   const doneCount = progressList.filter((p) => p.phase !== "running").length;
   const overallProgress =
@@ -489,12 +554,13 @@ export default function App() {
           </label>
           <select
             id="mode"
-            value={exportMode}
-            onChange={(e) => setExportMode(e.target.value as ExportMode)}
+            value={preset}
+            onChange={(e) => setPreset(e.target.value as Preset)}
             className="rounded border border-slate-700 bg-slate-900 px-2 py-1"
           >
             <option value="lossless_copy">Lossless (fast copy)</option>
-            <option value="smart_reencode">Frame-accurate 9:16</option>
+            <option value="smart_reencode">9:16 Center Crop</option>
+            <option value="blurred_background">9:16 Blurred Background</option>
           </select>
           <label htmlFor="speed" className="text-slate-400">
             Speed
@@ -518,16 +584,38 @@ export default function App() {
         <section className="flex min-w-0 flex-[2] flex-col">
           <div className="flex flex-1 items-center justify-center bg-black">
             {videoUrl ? (
-              <video
-                ref={videoRef}
-                src={videoUrl}
-                className="max-h-full max-w-full"
-                onTimeUpdate={onTimeUpdate}
-                onLoadedMetadata={onLoadedMetadata}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onClick={togglePlay}
-              />
+              <div
+                ref={wrapperRef}
+                className="relative inline-flex max-h-full"
+                onPointerMove={onOverlayDrag}
+                onPointerUp={() => setDragging(false)}
+                onPointerLeave={() => setDragging(false)}
+              >
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  className="max-h-full max-w-full"
+                  onTimeUpdate={onTimeUpdate}
+                  onLoadedMetadata={onLoadedMetadata}
+                  onPlay={() => setPlaying(true)}
+                  onPause={() => setPlaying(false)}
+                  onClick={togglePlay}
+                />
+                {overlayVisible && (
+                  <div
+                    className="absolute top-0 h-full cursor-ew-resize border-2 border-white/80 bg-white/10"
+                    style={{
+                      left: `${((cropOffset + 1) / 2) * (100 - OVERLAY_W_PCT)}%`,
+                      width: `${OVERLAY_W_PCT}%`,
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      setDragging(true);
+                    }}
+                    title="Drag to set the 9:16 crop position for the selected clip"
+                  />
+                )}
+              </div>
             ) : (
               <div className="text-center text-slate-500">
                 <p className="mb-3">Open a video file to start clipping</p>
@@ -599,9 +687,10 @@ export default function App() {
               clips.map((clip) => (
                 <div
                   key={clip.id}
-                  className={`border-b border-slate-800 p-2 text-sm ${
+                  onClick={() => setSelectedClipId(clip.id)}
+                  className={`cursor-pointer border-b border-slate-800 p-2 text-sm ${
                     loopId === clip.id ? "bg-slate-800" : ""
-                  }`}
+                  } ${selectedClipId === clip.id ? "ring-1 ring-blue-500" : ""}`}
                 >
                   <div className="flex items-center gap-2">
                     <input
@@ -699,6 +788,15 @@ export default function App() {
           {markIn !== null ? ` | In ${fmtTime(markIn)}` : ""}
           {markOut !== null ? ` | Out ${fmtTime(markOut)}` : ""}
         </div>
+        {peaks.length > 0 && (
+          <canvas
+            ref={waveformRef}
+            width={peaks.length}
+            height={64}
+            className="mb-1 h-10 w-full rounded bg-slate-900"
+            title="Audio waveform"
+          />
+        )}
         <div
           onClick={onTimelineClick}
           className="relative h-12 cursor-pointer rounded bg-slate-900"

@@ -24,11 +24,10 @@ rustcut/
 
 ## Status
 
-- [x] `rustcut-core`: models, naming, FFmpeg args, `.rustcut` persistence, ffprobe parsing, export planning — 37 unit tests green
-- [x] Tauri v2 shell: project IPC, `probe_media`, `start_export` with live `export://progress` / `export://finished` events — builds and launches
-- [x] UI: player, clip queue, timeline, keyboard map, per-clip crop sliders, export mode select, live progress bar
-- [x] End-to-end FFmpeg verification (3 integration tests): lossless cut, 9:16 crop export at 608x1080, template naming on disk — 40 tests total
-- [ ] Waveform, crop drag-overlay, blurred-background 9:16 preset
+- [x] `rustcut-core`: models, naming, FFmpeg args, `.rustcut` persistence, ffprobe parsing, export planning, waveform peaks — 44 unit tests green
+- [x] Tauri v2 shell: project IPC, `probe_media`, `start_export` (live `export://` events), `waveform_peaks`
+- [x] UI: player, clip queue, timeline with audio waveform, keyboard map, per-clip crop sliders + drag overlay, 3 export presets, live progress bar
+- [x] End-to-end FFmpeg verification (5 integration tests): lossless cut, 9:16 center crop at 608x1080, blurred-background 9:16, waveform peaks, template naming — 51 tests total
 - [ ] Installer bundle (bundled FFmpeg sidecar, 35–60 MB target)
 
 ## Build & test
