@@ -1,0 +1,22 @@
+[package]
+name = "rustcut"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+
+[lib]
+name = "rustcut_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde.workspace = true
+serde_json.workspace = true
+rustcut-core = { path = "../crates/rustcut-core" }

@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/rustcut-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+description = "RustCut / QuickClip - non-destructive batch video clipper"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+uuid = { version = "1.28.0", features = ["v4", "serde"] }
+sanitize-filename = "0.6.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

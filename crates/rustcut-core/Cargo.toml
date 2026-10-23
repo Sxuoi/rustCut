@@ -1,0 +1,12 @@
+[package]
+name = "rustcut-core"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sanitize-filename.workspace = true
