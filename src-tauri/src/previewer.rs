@@ -18,7 +18,9 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::UNIX_EPOCH;
 
-use rustcut_core::preview::{build_proxy_args, proxy_reason, ProxyEncoder, PREVIEW_FORMAT_VERSION};
+use rustcut_core::preview::{
+    build_proxy_args, proxy_reason, PreviewQuality, ProxyEncoder, PREVIEW_FORMAT_VERSION,
+};
 use rustcut_core::probe::{parse_ffprobe_json, MediaInfo};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -50,6 +52,8 @@ pub struct PreviewInfo {
     pub cached: bool,
     /// Encoder that produced the proxy (`qsv`, `software`), or `None` if cached.
     pub encoder: Option<String>,
+    /// Resolution actually requested for this proxy (`720p`, `1080p`).
+    pub quality: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,11 +91,13 @@ fn preview_dir() -> PathBuf {
         .join("previews")
 }
 
-/// Stable cache file name for a source: path + size + mtime + format version.
-fn cache_path(source: &Path) -> PathBuf {
+/// Stable cache file name for a source: path + size + mtime + format version
+/// + quality, so switching quality builds a separate proxy.
+fn cache_path(source: &Path, quality: PreviewQuality) -> PathBuf {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     source.to_string_lossy().hash(&mut hasher);
     PREVIEW_FORMAT_VERSION.hash(&mut hasher);
+    quality.label().hash(&mut hasher);
     if let Ok(meta) = std::fs::metadata(source) {
         meta.len().hash(&mut hasher);
         if let Ok(modified) = meta.modified() {
@@ -104,14 +110,27 @@ fn cache_path(source: &Path) -> PathBuf {
 }
 
 /// Probes the file and returns the path the preview player should load.
+/// `quality` is `"high"` for a 1080p proxy or anything else for 720p.
 #[tauri::command]
-pub async fn prepare_preview(app: AppHandle, path: String) -> Result<PreviewInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || prepare_preview_blocking(&app, &path))
+pub async fn prepare_preview(
+    app: AppHandle,
+    path: String,
+    quality: Option<String>,
+) -> Result<PreviewInfo, String> {
+    let quality = match quality.as_deref() {
+        Some("high") => PreviewQuality::High,
+        _ => PreviewQuality::Fast,
+    };
+    tauri::async_runtime::spawn_blocking(move || prepare_preview_blocking(&app, &path, quality))
         .await
         .map_err(|e| format!("preview task failed: {e}"))?
 }
 
-fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, String> {
+fn prepare_preview_blocking(
+    app: &AppHandle,
+    path: &str,
+    quality: PreviewQuality,
+) -> Result<PreviewInfo, String> {
     let source = Path::new(path);
     let info = probe(path)?;
 
@@ -125,10 +144,11 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
             reason: None,
             cached: false,
             encoder: None,
+            quality: quality.label().to_string(),
         });
     };
 
-    let target = cache_path(source);
+    let target = cache_path(source, quality);
     if std::fs::metadata(&target)
         .map(|m| m.len() > 4096)
         .unwrap_or(false)
@@ -142,6 +162,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
             reason: Some(reason),
             cached: true,
             encoder: None,
+            quality: quality.label().to_string(),
         });
     }
 
@@ -166,6 +187,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
             reason: Some(reason),
             cached: true,
             encoder: None,
+            quality: quality.label().to_string(),
         });
     }
 
@@ -175,7 +197,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
     let ffmpeg = resolve_tool("RUSTCUT_FFMPEG", "ffmpeg");
     let mut last_error = String::new();
     for encoder in ProxyEncoder::ALL {
-        let args = build_proxy_args(source, &part, info.duration_sec, encoder);
+        let args = build_proxy_args(source, &part, info.duration_sec, encoder, quality);
         match run_ffmpeg(&ffmpeg, &args, info.duration_sec, app, encoder) {
             Ok(()) => {
                 std::fs::rename(&part, &target)
@@ -189,6 +211,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
                     reason: Some(reason),
                     cached: false,
                     encoder: Some(encoder.label().to_string()),
+                    quality: quality.label().to_string(),
                 });
             }
             Err(err) => {

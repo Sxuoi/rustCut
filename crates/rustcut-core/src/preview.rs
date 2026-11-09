@@ -87,8 +87,35 @@ impl ProxyEncoder {
     }
 }
 
+/// Preview resolution. `Fast` decodes a 720p proxy — the difference between
+/// smooth and stuttering playback when WebView2 composites in software
+/// (RDP sessions, weak iGPUs). `High` keeps the source resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewQuality {
+    Fast,
+    High,
+}
+
+impl PreviewQuality {
+    pub fn label(&self) -> &'static str {
+        match self {
+            PreviewQuality::Fast => "720p",
+            PreviewQuality::High => "1080p",
+        }
+    }
+
+    /// Software scale filter that caps the proxy at this quality.
+    pub fn scale_filter(&self) -> &'static str {
+        match self {
+            PreviewQuality::Fast => "scale=-2:720",
+            PreviewQuality::High => "scale=-2:1080",
+        }
+    }
+}
+
 /// Bumped when the proxy command changes, so stale caches are rebuilt.
-pub const PREVIEW_FORMAT_VERSION: &str = "v4";
+pub const PREVIEW_FORMAT_VERSION: &str = "v5";
 
 /// Preview proxies are capped at 30 fps: the player dropped half the frames
 /// of a 1080p60 proxy on a 4-core CPU, and an editor preview does not need
@@ -99,13 +126,12 @@ pub const PROXY_FPS: &str = "30";
 ///
 /// `preset` trades size for time: `veryfast` for ordinary clips, `ultrafast`
 /// for long sources where waiting on the first preview would be worse.
-/// The proxy is capped at 1600 px wide: wide enough for framing decisions,
-/// small enough to seek quickly.
 pub fn build_proxy_args(
     input: &Path,
     output: &Path,
     duration_sec: f64,
     encoder: ProxyEncoder,
+    quality: PreviewQuality,
 ) -> Vec<String> {
     let preset = if duration_sec > 600.0 {
         "ultrafast"
@@ -131,6 +157,13 @@ pub fn build_proxy_args(
             args.push("h264_qsv".into());
             args.push("-global_quality".into());
             args.push("24".into());
+            // QSV frames are hardware surfaces: they must be downloaded before
+            // a software scale filter can touch them. At 1080p the proxy keeps
+            // the source size and skips the filter entirely (fastest path).
+            if quality == PreviewQuality::Fast {
+                args.push("-vf".into());
+                args.push(format!("hwdownload,format=nv12,{}", quality.scale_filter()));
+            }
         }
         ProxyEncoder::Software => {
             args.push("-c:v".into());
@@ -141,10 +174,8 @@ pub fn build_proxy_args(
             args.push("23".into());
             args.push("-pix_fmt".into());
             args.push("yuv420p".into());
-            // Software frames are plain memory, so the scale filter is cheap
-            // here; 720p keeps the portable path usable on weak CPUs.
             args.push("-vf".into());
-            args.push("scale=-2:720".into());
+            args.push(quality.scale_filter().to_string());
         }
     }
 
@@ -213,6 +244,7 @@ mod tests {
             Path::new("out.mp4"),
             40.0,
             ProxyEncoder::Software,
+            PreviewQuality::Fast,
         );
         let joined = args.join(" ");
         assert!(joined.contains("-c:v libx264"));
@@ -233,14 +265,29 @@ mod tests {
             Path::new("out.mp4"),
             40.0,
             ProxyEncoder::Qsv,
+            PreviewQuality::High,
         );
         let joined = args.join(" ");
         assert!(joined.contains("-hwaccel qsv"));
         assert!(joined.contains("-c:v h264_qsv"));
         assert!(!joined.contains("libx264"));
         // QSV frames are hardware surfaces; a software scale filter after
-        // them fails, so the QSV proxy keeps the source resolution.
+        // them fails, so the 1080p proxy keeps the source resolution.
         assert!(!joined.contains("-vf"));
+    }
+
+    #[test]
+    fn qsv_fast_quality_downloads_frames_before_scaling() {
+        let args = build_proxy_args(
+            Path::new("in.hevc.mp4"),
+            Path::new("out.mp4"),
+            40.0,
+            ProxyEncoder::Qsv,
+            PreviewQuality::Fast,
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("-c:v h264_qsv"));
+        assert!(joined.contains("hwdownload,format=nv12,scale=-2:720"));
     }
 
     #[test]
@@ -250,7 +297,16 @@ mod tests {
             Path::new("out.mp4"),
             3600.0,
             ProxyEncoder::Software,
+            PreviewQuality::Fast,
         );
         assert!(args.join(" ").contains("-preset ultrafast"));
+    }
+
+    #[test]
+    fn quality_labels_match_their_filters() {
+        assert_eq!(PreviewQuality::Fast.label(), "720p");
+        assert_eq!(PreviewQuality::High.label(), "1080p");
+        assert_eq!(PreviewQuality::Fast.scale_filter(), "scale=-2:720");
+        assert_eq!(PreviewQuality::High.scale_filter(), "scale=-2:1080");
     }
 }

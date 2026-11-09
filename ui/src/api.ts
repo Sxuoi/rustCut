@@ -98,6 +98,8 @@ export interface PreviewInfo {
   cached: boolean;
   /** Encoder that produced the proxy (`qsv`, `software`); null when cached. */
   encoder: string | null;
+  /** Resolution of this proxy: `720p` or `1080p`. */
+  quality: string;
 }
 
 /**
@@ -105,12 +107,15 @@ export interface PreviewInfo {
  * Matroska sources are transcoded once into a cached H.264 proxy; everything
  * the embedded player can decode is returned unchanged.
  */
-export async function preparePreview(path: string): Promise<PreviewInfo> {
+export async function preparePreview(
+  path: string,
+  quality: "fast" | "high" = "fast",
+): Promise<PreviewInfo> {
   if (!isTauri) {
     throw new Error("prepare_preview requires the Tauri runtime");
   }
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<PreviewInfo>("prepare_preview", { path });
+  return invoke<PreviewInfo>("prepare_preview", { path, quality });
 }
 
 /** Transcode progress for the preview proxy (0.0..=1.0). */

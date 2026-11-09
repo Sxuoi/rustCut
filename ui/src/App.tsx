@@ -28,6 +28,11 @@ const FPS_FALLBACK = 30;
 const COLORS = ["#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#06B6D4"];
 const SPEEDS = [0.5, 1, 1.25, 1.5, 2, 3];
 
+// Preview proxy resolution. `fast` (720p) keeps playback smooth when WebView2
+// composites in software (RDP sessions, weak iGPUs); `high` keeps 1080p.
+type PreviewQuality = "fast" | "high";
+const PREVIEW_QUALITY_KEY = "rustcut.previewQuality";
+
 // Guards the dev-only ?devvideo deep link against React StrictMode's
 // double-mounted effect.
 let devVideoRequested = false;
@@ -80,6 +85,10 @@ export default function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [loopId, setLoopId] = useState<string | null>(null);
   const [status, setStatus] = useState("Open a video to start marking clips.");
+  const [previewQuality, setPreviewQuality] = useState<PreviewQuality>(() =>
+    localStorage.getItem(PREVIEW_QUALITY_KEY) === "high" ? "high" : "fast",
+  );
+  const qualityRef = useRef<PreviewQuality>(previewQuality);
 
   const fps = media && media.fps > 0 ? media.fps : FPS_FALLBACK;
 
@@ -113,10 +122,10 @@ export default function App() {
       setStatus(`Preparing preview… ${Math.round(fraction * 100)}%`);
     });
     try {
-      const preview = await preparePreview(path);
+      const preview = await preparePreview(path, qualityRef.current);
       playableUrl = preview.preview_url;
       if (preview.transcoded) {
-        previewNote = ` ${preview.source_codec.toUpperCase()} source: previewing a cached H.264 copy${
+        previewNote = ` ${preview.source_codec.toUpperCase()} source: previewing a cached ${preview.quality} H.264 copy${
           preview.encoder ? ` (${preview.encoder})` : ""
         }${preview.cached ? ", already built" : ", built now"}.`;
       }
@@ -174,6 +183,19 @@ export default function App() {
       setStatus(`Open failed: ${String(err)}`);
     }
   }, [loadPath]);
+
+  const onQualityChange = useCallback(
+    (value: PreviewQuality) => {
+      qualityRef.current = value;
+      setPreviewQuality(value);
+      localStorage.setItem(PREVIEW_QUALITY_KEY, value);
+      // Rebuild/reload the current file at the new quality immediately.
+      if (sourcePath) {
+        void loadPath(sourcePath, "");
+      }
+    },
+    [sourcePath, loadPath],
+  );
 
   // Dev-only deep link: /?devvideo=<absolute path> loads a file without the
   // native dialog, so the player can be exercised in automated runs. The
@@ -599,6 +621,19 @@ export default function App() {
               </button>
             </>
           )}
+          <label htmlFor="preview-quality" className="text-slate-400">
+            Preview
+          </label>
+          <select
+            id="preview-quality"
+            value={previewQuality}
+            onChange={(e) => onQualityChange(e.target.value as PreviewQuality)}
+            className="rounded border border-slate-700 bg-slate-900 px-2 py-1"
+            title="Proxy resolution for the player; exports always use the original"
+          >
+            <option value="fast">720p (smooth)</option>
+            <option value="high">1080p (sharp)</option>
+          </select>
           <label htmlFor="mode" className="text-slate-400">
             Preset
           </label>
