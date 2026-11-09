@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent, MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   isTauri,
   loadProject,
@@ -93,6 +93,12 @@ export default function App() {
   const [namingPattern, setNamingPattern] = useState("{index}_{name}");
   const [namePreview, setNamePreview] = useState("");
   const [lastSaved, setLastSaved] = useState("");
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"index" | "start" | "duration" | "name">("index");
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  const trimRef = useRef<{ id: string; edge: "in" | "out"; startSec: number; endSec: number } | null>(
+    null,
+  );
 
   const fps = media && media.fps > 0 ? media.fps : FPS_FALLBACK;
 
@@ -640,6 +646,85 @@ export default function App() {
     });
   }, [peaks]);
 
+  const updateClipRange = useCallback(
+    (id: string, startSec: number, endSec: number) => {
+      const total = duration || 0;
+      if (total <= 0) {
+        return;
+      }
+      const minLen = 0.2;
+      let start = Math.max(0, Math.min(startSec, total - minLen));
+      let end = Math.min(total, Math.max(endSec, start + minLen));
+      if (end - start < minLen) {
+        start = Math.max(0, end - minLen);
+      }
+      setClips((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, start_sec: start, end_sec: end } : c)),
+      );
+    },
+    [duration],
+  );
+
+  const beginTrim = useCallback((e: ReactPointerEvent, clip: Clip, edge: "in" | "out") => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic pointers (tests) have no capture target; dragging still works.
+    }
+    trimRef.current = { id: clip.id, edge, startSec: clip.start_sec, endSec: clip.end_sec };
+  }, []);
+
+  const moveTrim = useCallback(
+    (e: ReactPointerEvent) => {
+      const drag = trimRef.current;
+      const rect = timelineRef.current?.getBoundingClientRect();
+      if (!drag || !rect || rect.width === 0 || !duration) {
+        return;
+      }
+      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const sec = fraction * duration;
+      if (drag.edge === "in") {
+        updateClipRange(drag.id, sec, drag.endSec);
+      } else {
+        updateClipRange(drag.id, drag.startSec, sec);
+      }
+    },
+    [duration, updateClipRange],
+  );
+
+  const endTrim = useCallback(() => {
+    trimRef.current = null;
+  }, []);
+
+  const setClipColor = useCallback((id: string, color: string) => {
+    setClips((prev) => prev.map((c) => (c.id === id ? { ...c, color } : c)));
+  }, []);
+
+  const visibleClips = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = q
+      ? clips.filter(
+          (c) => (c.name || "").toLowerCase().includes(q) || String(c.index) === q,
+        )
+      : [...clips];
+    switch (sortBy) {
+      case "start":
+        list.sort((a, b) => a.start_sec - b.start_sec);
+        break;
+      case "duration":
+        list.sort((a, b) => b.end_sec - b.start_sec - (a.end_sec - a.start_sec));
+        break;
+      case "name":
+        list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        break;
+      default:
+        list.sort((a, b) => a.index - b.index);
+    }
+    return list;
+  }, [clips, query, sortBy]);
+
   const selectedCount = clips.filter((c) => c.selected_for_export).length;
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
   const overlayVisible = preset === "smart_reencode" && selectedClip !== null;
@@ -838,13 +923,32 @@ export default function App() {
             <span className="font-semibold">Clip Queue ({clips.length})</span>
             <span className="text-xs text-slate-400">{selectedCount} selected</span>
           </div>
+          <div className="flex gap-2 border-b border-slate-800 px-3 py-2">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search clips…"
+              className="min-w-0 flex-1 rounded bg-slate-900 px-2 py-1 text-xs ring-slate-700 focus:outline-none focus:ring-1"
+            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              title="Sort the queue"
+              className="rounded border border-slate-700 bg-slate-900 px-1 py-1 text-xs"
+            >
+              <option value="index">Queue order</option>
+              <option value="start">Start time</option>
+              <option value="duration">Duration</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {clips.length === 0 ? (
               <p className="p-3 text-sm text-slate-500">
                 No clips yet. Press <b>I</b> and <b>O</b> to mark a range, then <b>Enter</b>.
               </p>
             ) : (
-              clips.map((clip) => (
+              visibleClips.map((clip) => (
                 <div
                   key={clip.id}
                   onClick={() => setSelectedClipId(clip.id)}
@@ -861,6 +965,13 @@ export default function App() {
                     <span className="font-mono text-xs" style={{ color: clip.color }}>
                       #{String(clip.index).padStart(2, "0")}
                     </span>
+                    <input
+                      type="color"
+                      value={clip.color}
+                      onChange={(e) => setClipColor(clip.id, e.target.value)}
+                      title="Clip color tag"
+                      className="h-4 w-4 shrink-0 cursor-pointer rounded border border-slate-700 bg-transparent p-0"
+                    />
                     <input
                       data-clip-id={clip.id}
                       value={clip.name}
@@ -973,9 +1084,13 @@ export default function App() {
           />
         )}
         <div
+          ref={timelineRef}
           onClick={onTimelineClick}
+          onPointerMove={moveTrim}
+          onPointerUp={endTrim}
+          onPointerLeave={endTrim}
           className="relative h-12 cursor-pointer rounded bg-slate-900"
-          title="Click to seek"
+          title="Click to seek; drag a clip edge to trim it"
         >
           {clips.map((clip) => (
             <div
@@ -987,7 +1102,20 @@ export default function App() {
                 backgroundColor: clip.color,
               }}
               title={`#${clip.index} ${clip.name || "(unnamed)"}`}
-            />
+            >
+              <div
+                className="absolute left-0 top-0 h-full w-1.5 cursor-ew-resize bg-white/80 hover:w-2"
+                onPointerDown={(e) => beginTrim(e, clip, "in")}
+                onClick={(e) => e.stopPropagation()}
+                title="Drag to trim the clip start"
+              />
+              <div
+                className="absolute right-0 top-0 h-full w-1.5 cursor-ew-resize bg-white/80 hover:w-2"
+                onPointerDown={(e) => beginTrim(e, clip, "out")}
+                onClick={(e) => e.stopPropagation()}
+                title="Drag to trim the clip end"
+              />
+            </div>
           ))}
           {markIn !== null && (
             <div
