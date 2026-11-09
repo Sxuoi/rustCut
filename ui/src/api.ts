@@ -161,12 +161,30 @@ export async function waveformPeaks(
 export async function startExport(
   state: ProjectState,
   source: SourceSpec,
+  encoder: string = "auto",
+  workers: number = 1,
 ): Promise<number> {
   if (!isTauri) {
     throw new Error("start_export requires the Tauri runtime");
   }
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<number>("start_export", { state, source });
+  return invoke<number>("start_export", { state, source, encoder, workers });
+}
+
+export interface EncoderOption {
+  id: string;
+  label: string;
+  available: boolean;
+  hardware: boolean;
+}
+
+/** Which H.264 encoders actually work here (probed by encoding a frame). */
+export async function detectEncoders(): Promise<EncoderOption[]> {
+  if (!isTauri) {
+    return [];
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<EncoderOption[]>("detect_encoders");
 }
 
 /** Subscribes to export events; returns an unsubscribe function. */

@@ -10,6 +10,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use rustcut_core::clip::ExportStatus;
@@ -92,19 +93,96 @@ pub fn preview_filename(
     format!("{}.mp4", build_output_stem(&pattern, &ctx))
 }
 
-/// Plans and launches a batch export on a background thread. Returns the
-/// number of jobs immediately; progress arrives via `export://progress`.
+#[derive(Debug, Clone, Serialize)]
+pub struct EncoderOption {
+    pub id: String,
+    pub label: String,
+    pub available: bool,
+    pub hardware: bool,
+}
+
+static ENCODERS: OnceLock<Vec<EncoderOption>> = OnceLock::new();
+
+/// One-second smoke encode: ffmpeg can list an encoder whose hardware is
+/// missing, so availability is proven by actually encoding a frame.
+fn probe_encoder(ffmpeg: &str, name: &str) -> bool {
+    Command::new(ffmpeg)
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=128x128:rate=30",
+            "-t",
+            "0.2",
+            "-c:v",
+            name,
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Which H.264 encoders actually work on this machine (cached after the
+/// first call — each probe costs ~0.3 s).
+#[tauri::command]
+pub fn detect_encoders() -> Vec<EncoderOption> {
+    ENCODERS
+        .get_or_init(|| {
+            let ffmpeg = resolve_tool("RUSTCUT_FFMPEG", "ffmpeg");
+            let candidates = [
+                ("software", "Software (x264)", "libx264", false),
+                ("nvenc", "NVIDIA NVENC", "h264_nvenc", true),
+                ("amf", "AMD AMF", "h264_amf", true),
+                ("qsv", "Intel Quick Sync", "h264_qsv", true),
+                ("videotoolbox", "Apple VideoToolbox", "h264_videotoolbox", true),
+            ];
+            candidates
+                .iter()
+                .map(|(id, label, encoder, hardware)| EncoderOption {
+                    id: id.to_string(),
+                    label: label.to_string(),
+                    available: probe_encoder(&ffmpeg, encoder),
+                    hardware: *hardware,
+                })
+                .collect()
+        })
+        .clone()
+}
+
+/// `auto` picks the first working hardware encoder, else software.
+fn pick_auto_encoder() -> VideoEncoder {
+    detect_encoders()
+        .iter()
+        .find(|o| o.hardware && o.available)
+        .map(|o| VideoEncoder::from_setting(&o.id))
+        .unwrap_or_else(VideoEncoder::software_default)
+}
+
+/// Plans and launches a batch export on background worker threads. Returns
+/// the number of jobs immediately; progress arrives via `export://progress`.
 #[tauri::command]
 pub fn start_export(
     app: AppHandle,
     state: ProjectState,
     source: SourceSpec,
+    encoder: Option<String>,
+    workers: Option<u32>,
 ) -> Result<usize, String> {
+    let chosen = match encoder.as_deref() {
+        None | Some("auto") => pick_auto_encoder(),
+        Some(other) => VideoEncoder::from_setting(other),
+    };
     let ExportPlan {
         jobs,
         skipped,
         estimated_bytes: _,
-    } = plan_export(&state, &source, &VideoEncoder::software_default());
+    } = plan_export(&state, &source, &chosen);
 
     if jobs.is_empty() && skipped.is_empty() {
         return Err("no clips are selected for export".to_string());
@@ -125,42 +203,74 @@ pub fn start_export(
 
     let job_count = jobs.len();
     let ffmpeg = resolve_tool("RUSTCUT_FFMPEG", "ffmpeg");
+    let worker_count = workers
+        .unwrap_or(state.export_settings.parallel_jobs)
+        .clamp(1, 8)
+        .min(job_count.max(1) as u32);
+
+    // PRD 4.4: sequential or 2-4 clips in parallel. Jobs are pulled from a
+    // shared queue so a slow clip never blocks the others.
+    let queue: Arc<Mutex<Vec<_>>> = Arc::new(Mutex::new(jobs));
+    let collected: Arc<Mutex<Vec<ExportResult>>> = Arc::new(Mutex::new(Vec::new()));
+
     thread::spawn(move || {
-        let mut results: Vec<ExportResult> = Vec::new();
-        for job in jobs {
-            let clip_id = job.clip_id.to_string();
-            let _ = app.emit(
-                EVENT_PROGRESS,
-                ProgressEvent {
-                    clip_id: clip_id.clone(),
-                    index: job.index,
-                    fraction: 0.0,
-                    phase: "running".to_string(),
-                    message: None,
-                },
-            );
+        let mut handles = Vec::new();
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&queue);
+            let collected = Arc::clone(&collected);
+            let app = app.clone();
+            let ffmpeg = ffmpeg.clone();
+            handles.push(thread::spawn(move || loop {
+                let next = {
+                    let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+                    q.pop()
+                };
+                let Some(job) = next else { break };
+                let clip_id = job.clip_id.to_string();
+                let _ = app.emit(
+                    EVENT_PROGRESS,
+                    ProgressEvent {
+                        clip_id: clip_id.clone(),
+                        index: job.index,
+                        fraction: 0.0,
+                        phase: "running".to_string(),
+                        message: None,
+                    },
+                );
 
-            let outcome = run_ffmpeg(
-                &ffmpeg,
-                &job.args,
-                job.end_sec - job.start_sec,
-                &app,
-                job.index,
-                clip_id.clone(),
-            );
-
-            let (status, message) = match outcome {
-                Ok(()) => (ExportStatus::Completed, None),
-                Err(e) => (ExportStatus::Failed, Some(e)),
-            };
-            results.push(ExportResult {
-                clip_id: job.clip_id,
-                index: job.index,
-                output: job.output,
-                status,
-                message,
-            });
+                let outcome = run_ffmpeg(
+                    &ffmpeg,
+                    &job.args,
+                    job.end_sec - job.start_sec,
+                    &app,
+                    job.index,
+                    clip_id,
+                );
+                let (status, message) = match outcome {
+                    Ok(()) => (ExportStatus::Completed, None),
+                    Err(e) => (ExportStatus::Failed, Some(e)),
+                };
+                collected
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(ExportResult {
+                        clip_id: job.clip_id,
+                        index: job.index,
+                        output: job.output,
+                        status,
+                        message,
+                    });
+            }));
         }
+
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        let mut results = Arc::try_unwrap(collected)
+            .map(|m| m.into_inner().unwrap_or_default())
+            .unwrap_or_default();
+        results.sort_by_key(|r| r.index);
 
         let summary = summarize(&results, skipped);
         let _ = app.emit(

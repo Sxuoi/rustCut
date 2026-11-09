@@ -34,6 +34,7 @@ export interface ExportSettings {
   crop_style: CropStyle;
   crop_x_offset: number;
   parallel_jobs: number;
+  encoder: string;
 }
 
 export interface ProjectState {

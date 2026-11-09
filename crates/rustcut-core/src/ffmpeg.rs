@@ -47,6 +47,29 @@ impl VideoEncoder {
         }
     }
 
+    /// Maps a project setting (`auto`, `software`, `nvenc`, `amf`, `qsv`,
+    /// `videotoolbox`) onto an encoder. Unknown values fall back to software.
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "nvenc" => VideoEncoder::Hw(HwEncoder::Nvenc),
+            "amf" => VideoEncoder::Hw(HwEncoder::Amf),
+            "qsv" => VideoEncoder::Hw(HwEncoder::Qsv),
+            "videotoolbox" => VideoEncoder::Hw(HwEncoder::VideoToolbox),
+            _ => VideoEncoder::software_default(),
+        }
+    }
+
+    /// Stable identifier used by the UI and the detector.
+    pub fn id(&self) -> &'static str {
+        match self {
+            VideoEncoder::Libx264 { .. } => "software",
+            VideoEncoder::Hw(HwEncoder::Nvenc) => "nvenc",
+            VideoEncoder::Hw(HwEncoder::Amf) => "amf",
+            VideoEncoder::Hw(HwEncoder::Qsv) => "qsv",
+            VideoEncoder::Hw(HwEncoder::VideoToolbox) => "videotoolbox",
+        }
+    }
+
     /// `-c:v ...` arguments for this encoder.
     pub fn codec_args(&self) -> Vec<String> {
         match self {

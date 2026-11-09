@@ -9,6 +9,7 @@ import {
   onPreviewProgress,
   preparePreview,
   previewFilename,
+  detectEncoders,
   probeMedia,
   saveProject,
   startExport,
@@ -95,6 +96,11 @@ export default function App() {
   const [lastSaved, setLastSaved] = useState("");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"index" | "start" | "duration" | "name">("index");
+  const [encoders, setEncoders] = useState<
+    { id: string; label: string; available: boolean; hardware: boolean }[]
+  >([]);
+  const [encoderId, setEncoderId] = useState("auto");
+  const [workers, setWorkers] = useState(1);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const trimRef = useRef<{ id: string; edge: "in" | "out"; startSec: number; endSec: number } | null>(
     null,
@@ -176,6 +182,8 @@ export default function App() {
       );
       setOutputDir(saved.export_settings.output_dir || "");
       setNamingPattern(saved.export_settings.naming_pattern || "{index}_{name}");
+      setWorkers(saved.export_settings.parallel_jobs || 1);
+      setEncoderId(saved.export_settings.encoder || "auto");
       setDuration((d) => d || saved.source_video.duration_sec || 0);
       setStatus(`${mediaLine} Restored ${saved.clips.length} saved clip(s) from the project file.`);
     } catch {
@@ -390,11 +398,12 @@ export default function App() {
         aspect_ratio_override: null,
         crop_style: preset === "blurred_background" ? "blurred_background" : "center_crop",
         crop_x_offset: 0,
-        parallel_jobs: 1,
+        parallel_jobs: workers,
+        encoder: encoderId,
       },
       clips,
     };
-  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, namingPattern, clips]);
+  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, namingPattern, workers, encoderId, clips]);
 
   const save = useCallback(() => {
     // The project file lives next to the source video (PRD 4.5), so the
@@ -454,6 +463,17 @@ export default function App() {
       .catch(() => setNamePreview(""));
   }, [namingPattern, clips, sourceName]);
 
+  // Probe which encoders actually work once, so the panel can offer hardware
+  // acceleration only where it exists (PRD 4.4).
+  useEffect(() => {
+    if (!isTauri) {
+      return;
+    }
+    void detectEncoders()
+      .then(setEncoders)
+      .catch(() => setEncoders([]));
+  }, []);
+
   const runExport = useCallback(async () => {
     if (!isTauri) {
       setStatus("Batch export runs in the desktop app.");
@@ -483,13 +503,13 @@ export default function App() {
       setProgress({});
       setExportSummary("");
       setExporting(true);
-      const jobs = await startExport(state, source);
+      const jobs = await startExport(state, source, encoderId, workers);
       setStatus(`Exporting ${jobs} clip(s)...`);
     } catch (err) {
       setExporting(false);
       setStatus(`Export failed to start: ${String(err)}`);
     }
-  }, [sourcePath, outputDir, clips, buildProjectState, media]);
+  }, [sourcePath, outputDir, clips, buildProjectState, media, encoderId, workers]);
 
   // Live export progress from the Rust layer.
   useEffect(() => {
@@ -1027,6 +1047,40 @@ export default function App() {
             )}
           </div>
           <div className="border-t border-slate-800 p-3">
+            <div className="mb-2 flex gap-2">
+              <label className="min-w-0 flex-1 text-xs text-slate-400">
+                Encoder
+                <select
+                  value={encoderId}
+                  onChange={(e) => setEncoderId(e.target.value)}
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-1 py-1 text-xs"
+                  title="Hardware encoders are only listed when they actually work on this machine"
+                >
+                  <option value="auto">Auto (best available)</option>
+                  {encoders.map((enc) => (
+                    <option key={enc.id} value={enc.id} disabled={!enc.available}>
+                      {enc.label}
+                      {enc.available ? "" : " - unavailable"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="w-20 shrink-0 text-xs text-slate-400">
+                Jobs
+                <select
+                  value={workers}
+                  onChange={(e) => setWorkers(Number(e.target.value))}
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-1 py-1 text-xs"
+                  title="1 = sequential, 2-4 = parallel exports"
+                >
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <label htmlFor="naming" className="mb-1 block text-xs text-slate-400">
               File name template
             </label>

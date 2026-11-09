@@ -38,6 +38,14 @@ pub struct ExportSettings {
     pub crop_style: crate::ffmpeg::CropStyle,
     pub crop_x_offset: f64,
     pub parallel_jobs: u32,
+    /// `auto` | `software` | `nvenc` | `amf` | `qsv` | `videotoolbox`.
+    /// Older project files default to `auto`.
+    #[serde(default = "default_encoder")]
+    pub encoder: String,
+}
+
+fn default_encoder() -> String {
+    "auto".to_string()
 }
 
 impl ExportSettings {
@@ -52,6 +60,7 @@ impl ExportSettings {
             crop_style: crate::ffmpeg::CropStyle::CenterCrop,
             crop_x_offset: 0.0,
             parallel_jobs: 1,
+            encoder: default_encoder(),
         }
     }
 }
