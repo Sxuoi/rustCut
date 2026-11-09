@@ -10,6 +10,7 @@ import {
   preparePreview,
   previewFilename,
   detectEncoders,
+  canvasInfo,
   probeMedia,
   saveProject,
   startExport,
@@ -101,6 +102,11 @@ export default function App() {
   >([]);
   const [encoderId, setEncoderId] = useState("auto");
   const [workers, setWorkers] = useState(1);
+  const [canvas, setCanvas] = useState<{ canvas_w: number; canvas_h: number; crop_w: number } | null>(
+    null,
+  );
+  const [stage, setStage] = useState({ w: 0, h: 0 });
+  const videoPaneRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const trimRef = useRef<{ id: string; edge: "in" | "out"; startSec: number; endSec: number } | null>(
     null,
@@ -474,6 +480,37 @@ export default function App() {
       .catch(() => setEncoders([]));
   }, []);
 
+  // Working-canvas dimensions come from the same Rust function the export
+  // filter uses, so the preview cannot disagree with the output (PRD 4.4).
+  useEffect(() => {
+    if (!isTauri || !media || !media.width || !media.height) {
+      setCanvas(null);
+      return;
+    }
+    void canvasInfo(media.width, media.height)
+      .then(setCanvas)
+      .catch(() => setCanvas(null));
+  }, [media]);
+
+  // Size the canvas stage to fit the player pane while keeping its aspect.
+  useEffect(() => {
+    const el = videoPaneRef.current;
+    if (!el || !canvas) {
+      setStage({ w: 0, h: 0 });
+      return;
+    }
+    const compute = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const aspect = canvas.canvas_w / canvas.canvas_h;
+      const w = Math.min(width, height * aspect);
+      setStage({ w: Math.max(0, Math.floor(w)), h: Math.max(0, Math.floor(w / aspect)) });
+    };
+    compute();
+    const observer = new ResizeObserver(compute);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [canvas, videoUrl]);
+
   const runExport = useCallback(async () => {
     if (!isTauri) {
       setStatus("Batch export runs in the desktop app.");
@@ -547,15 +584,20 @@ export default function App() {
         return;
       }
       const rect = wrapperRef.current.getBoundingClientRect();
-      const cropW = (rect.width * OVERLAY_W_PCT) / 100;
-      const usable = rect.width - cropW;
+      const useCanvas = canvas !== null && preset !== "lossless_copy";
+      const cropFraction =
+        useCanvas && canvas ? canvas.crop_w / canvas.canvas_w : OVERLAY_W_PCT / 100;
+      const usable = rect.width * (1 - cropFraction);
       if (usable <= 0) {
         return;
       }
-      const x = Math.min(Math.max(0, e.clientX - rect.left - cropW / 2), usable);
+      const x = Math.min(
+        Math.max(0, e.clientX - rect.left - (rect.width * cropFraction) / 2),
+        usable,
+      );
       setCropOffset(selectedClipId, (x / usable) * 2 - 1);
     },
-    [dragging, selectedClipId, setCropOffset],
+    [dragging, selectedClipId, setCropOffset, canvas, preset],
   );
 
   const onTimelineClick = useCallback(
@@ -749,6 +791,15 @@ export default function App() {
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
   const overlayVisible = preset === "smart_reencode" && selectedClip !== null;
   const cropOffset = selectedClip?.crop_x_offset ?? 0;
+  // WYSIWYG geometry: the stage is the 16:9 working canvas and the overlay is
+  // the exact 9:16 window the export filter will cut (PRD 4.4).
+  const usingCanvas = canvas !== null && preset !== "lossless_copy" && stage.w > 0;
+  const cropWidthPct =
+    usingCanvas && canvas ? (canvas.crop_w / canvas.canvas_w) * 100 : OVERLAY_W_PCT;
+  const cropLeftPct =
+    usingCanvas && canvas
+      ? ((((canvas.canvas_w - canvas.crop_w) * (1 + cropOffset)) / 2) / canvas.canvas_w) * 100
+      : ((cropOffset + 1) / 2) * (100 - OVERLAY_W_PCT);
   const progressList = Object.values(progress);
   const doneCount = progressList.filter((p) => p.phase !== "running").length;
   const overallProgress =
@@ -829,11 +880,19 @@ export default function App() {
 
       <main className="flex min-h-0 flex-1">
         <section className="flex min-h-0 min-w-0 flex-[2] flex-col">
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
+          <div
+            ref={videoPaneRef}
+            className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black"
+          >
             {videoUrl ? (
               <div
                 ref={wrapperRef}
-                className="relative inline-flex max-h-full max-w-full"
+                className={
+                  usingCanvas
+                    ? "relative bg-black ring-1 ring-slate-800"
+                    : "relative inline-flex max-h-full max-w-full"
+                }
+                style={usingCanvas ? { width: stage.w, height: stage.h } : undefined}
                 onPointerMove={onOverlayDrag}
                 onPointerUp={() => setDragging(false)}
                 onPointerLeave={() => setDragging(false)}
@@ -841,7 +900,11 @@ export default function App() {
                 <video
                   ref={videoRef}
                   src={videoUrl}
-                  className="max-h-full max-w-full object-contain"
+                  className={
+                    usingCanvas
+                      ? "h-full w-full object-contain"
+                      : "max-h-full max-w-full object-contain"
+                  }
                   onTimeUpdate={onTimeUpdate}
                   onLoadedMetadata={onLoadedMetadata}
                   onPlay={() => setPlaying(true)}
@@ -864,8 +927,8 @@ export default function App() {
                   <div
                     className="absolute top-0 h-full cursor-ew-resize border-2 border-white/80 bg-white/10"
                     style={{
-                      left: `${((cropOffset + 1) / 2) * (100 - OVERLAY_W_PCT)}%`,
-                      width: `${OVERLAY_W_PCT}%`,
+                      left: `${cropLeftPct}%`,
+                      width: `${cropWidthPct}%`,
                     }}
                     onPointerDown={(e) => {
                       e.preventDefault();

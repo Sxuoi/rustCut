@@ -93,6 +93,26 @@ pub fn preview_filename(
     format!("{}.mp4", build_output_stem(&pattern, &ctx))
 }
 
+/// 16:9 working canvas for a source, plus the 9:16 crop width on it. The
+/// preview uses the same numbers as the export filter chain so the framed
+/// area is exactly what will be written (PRD 4.4 WYSIWYG).
+#[derive(Debug, Clone, Serialize)]
+pub struct CanvasInfo {
+    pub canvas_w: u32,
+    pub canvas_h: u32,
+    pub crop_w: u32,
+}
+
+#[tauri::command]
+pub fn canvas_info(width: u32, height: u32) -> CanvasInfo {
+    let (canvas_w, canvas_h) = rustcut_core::ffmpeg::canvas_dims(width, height);
+    CanvasInfo {
+        canvas_w,
+        canvas_h,
+        crop_w: rustcut_core::ffmpeg::crop_width_px(canvas_h),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderOption {
     pub id: String,

@@ -35,6 +35,7 @@ pub fn run() {
             save_project,
             exporter::probe_media,
             exporter::preview_filename,
+            exporter::canvas_info,
             exporter::detect_encoders,
             exporter::start_export,
             exporter::waveform_peaks,

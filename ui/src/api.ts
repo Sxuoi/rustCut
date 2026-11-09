@@ -178,6 +178,21 @@ export interface EncoderOption {
   hardware: boolean;
 }
 
+export interface CanvasInfo {
+  canvas_w: number;
+  canvas_h: number;
+  crop_w: number;
+}
+
+/** 16:9 working canvas + 9:16 crop width, straight from the export math. */
+export async function canvasInfo(width: number, height: number): Promise<CanvasInfo> {
+  if (!isTauri) {
+    throw new Error("canvas_info requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<CanvasInfo>("canvas_info", { width, height });
+}
+
 /** Which H.264 encoders actually work here (probed by encoding a frame). */
 export async function detectEncoders(): Promise<EncoderOption[]> {
   if (!isTauri) {
