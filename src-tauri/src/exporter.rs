@@ -113,6 +113,128 @@ pub fn canvas_info(width: u32, height: u32) -> CanvasInfo {
     }
 }
 
+/// Whether a path exists on disk — used before restoring a project whose
+/// source video may have been moved (PRD 9 "Locate Missing Media").
+#[tauri::command]
+pub fn path_exists(path: String) -> bool {
+    Path::new(&path).exists()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiskSpace {
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// Free/total bytes for the volume holding `path`, via the OS tool rather than
+/// a new crate (`fsutil` on Windows, `df` elsewhere).
+fn disk_space_for(path: &Path) -> Result<DiskSpace, String> {
+    #[cfg(windows)]
+    {
+        let drive = path
+            .components()
+            .next()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .filter(|d| d.len() >= 2)
+            .unwrap_or_else(|| "C:".to_string());
+        let target = if drive.ends_with('\\') {
+            drive
+        } else {
+            format!("{drive}\\")
+        };
+        let output = Command::new("fsutil")
+            .args(["volume", "diskfree", &target])
+            .output()
+            .map_err(|e| format!("fsutil failed: {e}"))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut free = None;
+        let mut total = None;
+        for line in text.lines() {
+            let Some((label, rest)) = line.split_once(':') else {
+                continue;
+            };
+            // Values carry locale separators: take digits before the "(38,3 GB)".
+            let digits: String = rest
+                .split('(')
+                .next()
+                .unwrap_or("")
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect();
+            if digits.is_empty() {
+                continue;
+            }
+            let value: u64 = digits.parse().unwrap_or(0);
+            match label.trim().to_ascii_lowercase().as_str() {
+                "total free bytes" => free = Some(value),
+                "total bytes" => total = Some(value),
+                _ => {}
+            }
+        }
+        return match (free, total) {
+            (Some(free_bytes), Some(total_bytes)) => Ok(DiskSpace {
+                free_bytes,
+                total_bytes,
+            }),
+            _ => Err("could not parse fsutil output".to_string()),
+        };
+    }
+
+    #[cfg(not(windows))]
+    {
+        let output = Command::new("df")
+            .args(["-Pk", &path.to_string_lossy()])
+            .output()
+            .map_err(|e| format!("df failed: {e}"))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text.lines().nth(1).ok_or("df returned no data")?;
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 4 {
+            return Err("unexpected df output".to_string());
+        }
+        let total_kb: u64 = cols[1].parse().unwrap_or(0);
+        let free_kb: u64 = cols[3].parse().unwrap_or(0);
+        Ok(DiskSpace {
+            free_bytes: free_kb * 1024,
+            total_bytes: total_kb * 1024,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Preflight {
+    pub jobs: usize,
+    pub estimated_bytes: u64,
+    pub free_bytes: u64,
+    /// False when the estimate cannot fit in the free space (when known).
+    pub ok: bool,
+}
+
+fn output_dir_for(state: &ProjectState) -> String {
+    if state.export_settings.output_dir.trim().is_empty() {
+        state.source_video.path.clone()
+    } else {
+        state.export_settings.output_dir.clone()
+    }
+}
+
+/// What a batch would produce and whether the target drive has room (PRD 9).
+#[tauri::command]
+pub fn export_preflight(state: ProjectState, source: SourceSpec) -> Preflight {
+    let encoder = VideoEncoder::from_setting(&state.export_settings.encoder);
+    let plan = plan_export(&state, &source, &encoder);
+    let free = disk_space_for(Path::new(&output_dir_for(&state)))
+        .map(|s| s.free_bytes)
+        .unwrap_or(0);
+    let estimated = plan.estimated_bytes;
+    Preflight {
+        jobs: plan.jobs.len(),
+        estimated_bytes: estimated,
+        free_bytes: free,
+        ok: free == 0 || free > estimated + 50 * 1024 * 1024,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderOption {
     pub id: String,
@@ -201,11 +323,23 @@ pub fn start_export(
     let ExportPlan {
         jobs,
         skipped,
-        estimated_bytes: _,
+        estimated_bytes,
     } = plan_export(&state, &source, &chosen);
 
     if jobs.is_empty() && skipped.is_empty() {
         return Err("no clips are selected for export".to_string());
+    }
+
+    // PRD 9: refuse to start a batch that cannot fit on the target drive.
+    if let Ok(space) = disk_space_for(Path::new(&output_dir_for(&state))) {
+        const MARGIN: u64 = 50 * 1024 * 1024;
+        if space.free_bytes > 0 && estimated_bytes + MARGIN > space.free_bytes {
+            return Err(format!(
+                "not enough free space: about {} MB needed, {} MB free",
+                estimated_bytes / 1_048_576,
+                space.free_bytes / 1_048_576
+            ));
+        }
     }
 
     for s in &skipped {

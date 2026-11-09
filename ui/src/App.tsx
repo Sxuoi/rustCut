@@ -5,12 +5,15 @@ import {
   loadProject,
   onExportEvents,
   openVideoDialog,
+  openProjectDialog,
+  pathExists,
   pickOutputFolder,
   onPreviewProgress,
   preparePreview,
   previewFilename,
   detectEncoders,
   canvasInfo,
+  exportPreflight,
   probeMedia,
   saveProject,
   startExport,
@@ -56,6 +59,20 @@ function fmtTime(secs: number): string {
 function fmtDur(secs: number): string {
   const total = Math.max(0, Math.round(secs));
   return total >= 60 ? `${Math.floor(total / 60)}m${total % 60}s` : `${total}s`;
+}
+
+function fmtBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) {
+    return "unknown";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
 // `video.mp4` -> `video.rustcut`, kept next to the source (PRD 4.5).
@@ -106,6 +123,12 @@ export default function App() {
     null,
   );
   const [stage, setStage] = useState({ w: 0, h: 0 });
+  const [preflight, setPreflight] = useState<{
+    jobs: number;
+    estimated_bytes: number;
+    free_bytes: number;
+    ok: boolean;
+  } | null>(null);
   const videoPaneRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const trimRef = useRef<{ id: string; edge: "in" | "out"; startSec: number; endSec: number } | null>(
@@ -206,6 +229,34 @@ export default function App() {
       await loadPath(picked.path, picked.url);
     } catch (err) {
       setStatus(`Open failed: ${String(err)}`);
+    }
+  }, [loadPath]);
+
+  const openProject = useCallback(async () => {
+    try {
+      const projectPath = await openProjectDialog();
+      if (!projectPath) {
+        return;
+      }
+      const saved = await loadProject(projectPath);
+      let source = saved.source_video.path;
+      if (!(await pathExists(source))) {
+        // PRD 9: locate missing media instead of discarding the markers.
+        setStatus(`Source video missing: ${source}. Choose its new location…`);
+        const replacement = await openVideoDialog();
+        if (!replacement) {
+          setStatus("Relink cancelled; no markers were loaded.");
+          return;
+        }
+        source = replacement.path;
+        saved.source_video.path = source;
+        setStatus(`Relinked to ${source}. Restoring markers…`);
+      }
+      // Keep the project next to the resolved source, then load it normally.
+      await saveProject(projectPathFor(source), saved);
+      await loadPath(source, "");
+    } catch (err) {
+      setStatus(`Open project failed: ${String(err)}`);
     }
   }, [loadPath]);
 
@@ -510,6 +561,32 @@ export default function App() {
     observer.observe(el);
     return () => observer.disconnect();
   }, [canvas, videoUrl]);
+
+  // Estimated output size vs free space on the target drive (PRD 9).
+  useEffect(() => {
+    if (!isTauri || !sourcePath || clips.length === 0) {
+      setPreflight(null);
+      return;
+    }
+    const state = buildProjectState();
+    state.export_settings.output_dir = outputDir;
+    const source: SourceSpec = {
+      width: media?.width ?? 1920,
+      height: media?.height ?? 1080,
+      bitrate_bps: media?.bitrate_bps ?? 8_000_000,
+    };
+    let cancelled = false;
+    void exportPreflight(state, source)
+      .then((result) => {
+        if (!cancelled) setPreflight(result);
+      })
+      .catch(() => {
+        if (!cancelled) setPreflight(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourcePath, outputDir, clips.length, buildProjectState, media]);
 
   const runExport = useCallback(async () => {
     if (!isTauri) {
@@ -824,6 +901,13 @@ export default function App() {
             <>
               <button className="btn" onClick={openVideo}>
                 Open Video
+              </button>
+              <button
+                className="btn"
+                onClick={() => void openProject()}
+                title="Open a .rustcut project, relinking its video if it moved"
+              >
+                Open Project
               </button>
               <button
                 className="btn"
@@ -1159,9 +1243,30 @@ export default function App() {
             <div className="mb-2 mt-1 truncate font-mono text-[11px] text-slate-500" title={namePreview}>
               {namePreview ? `→ ${namePreview}` : "→ 01_Clip_01.mp4"}
             </div>
+            {preflight && (
+              <div
+                className={`mb-2 text-[11px] ${preflight.ok ? "text-slate-500" : "text-rose-400"}`}
+                title="Estimated output size against free space on the target drive"
+              >
+                {preflight.jobs} clip(s) · est. {fmtBytes(preflight.estimated_bytes)} ·{" "}
+                {fmtBytes(preflight.free_bytes)} free
+                {preflight.ok ? "" : " - not enough space"}
+              </div>
+            )}
+            {preset === "lossless_copy" &&
+              canvas &&
+              media &&
+              (canvas.canvas_w !== media.width || canvas.canvas_h !== media.height) && (
+                <div className="mb-2 text-[11px] text-amber-400">
+                  Lossless copy keeps the raw {media.width}×{media.height} frame; the 16:9 canvas
+                  and 9:16 crop only apply to re-encode presets.
+                </div>
+              )}
             <button
               onClick={() => void runExport()}
-              disabled={!isTauri || exporting || selectedCount === 0}
+              disabled={
+                !isTauri || exporting || selectedCount === 0 || (preflight !== null && !preflight.ok)
+              }
               className="w-full rounded bg-blue-600 py-2 font-semibold text-white disabled:opacity-50"
               title={isTauri ? "Export all checked clips" : "Batch export runs in the desktop app"}
             >

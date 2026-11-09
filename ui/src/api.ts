@@ -67,6 +67,28 @@ export async function openVideoDialog(): Promise<OpenedVideo | null> {
   return { path: selected, url: convertFileSrc(selected) };
 }
 
+/** Project file picker (Tauri). */
+export async function openProjectDialog(): Promise<string | null> {
+  if (!isTauri) {
+    return null;
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "RustCut project", extensions: ["rustcut"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/** True when the path exists on disk (used before restoring a project). */
+export async function pathExists(path: string): Promise<boolean> {
+  if (!isTauri) {
+    return false;
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<boolean>("path_exists", { path });
+}
+
 /** Directory picker for the export destination (Tauri). */
 export async function pickOutputFolder(): Promise<string | null> {
   if (!isTauri) {
@@ -200,6 +222,25 @@ export async function detectEncoders(): Promise<EncoderOption[]> {
   }
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<EncoderOption[]>("detect_encoders");
+}
+
+export interface Preflight {
+  jobs: number;
+  estimated_bytes: number;
+  free_bytes: number;
+  ok: boolean;
+}
+
+/** Estimated output size and free space on the target drive (PRD 9). */
+export async function exportPreflight(
+  state: ProjectState,
+  source: SourceSpec,
+): Promise<Preflight> {
+  if (!isTauri) {
+    throw new Error("export_preflight requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<Preflight>("export_preflight", { state, source });
 }
 
 /** Subscribes to export events; returns an unsubscribe function. */

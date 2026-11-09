@@ -37,6 +37,8 @@ pub fn run() {
             exporter::preview_filename,
             exporter::canvas_info,
             exporter::detect_encoders,
+            exporter::export_preflight,
+            exporter::path_exists,
             exporter::start_export,
             exporter::waveform_peaks,
             previewer::prepare_preview
