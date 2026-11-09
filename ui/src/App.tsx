@@ -14,6 +14,7 @@ import {
   detectEncoders,
   canvasInfo,
   exportPreflight,
+  suggestClips,
   probeMedia,
   saveProject,
   startExport,
@@ -129,6 +130,8 @@ export default function App() {
     free_bytes: number;
     ok: boolean;
   } | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [sensitivity, setSensitivity] = useState(1.5);
   const videoPaneRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const trimRef = useRef<{ id: string; edge: "in" | "out"; startSec: number; endSec: number } | null>(
@@ -259,6 +262,42 @@ export default function App() {
       setStatus(`Open project failed: ${String(err)}`);
     }
   }, [loadPath]);
+
+  const runSuggest = useCallback(async () => {
+    if (!sourcePath) {
+      setStatus("Open a video first.");
+      return;
+    }
+    setSuggesting(true);
+    setStatus("Analyzing audio for loud moments…");
+    try {
+      const found = await suggestClips(sourcePath, sensitivity);
+      if (found.length === 0) {
+        setStatus("No loud moments found — try a looser sensitivity.");
+        return;
+      }
+      setClips((prev) => {
+        const base = prev.length;
+        const suggestions = found.map((seg, i) => ({
+          id: crypto.randomUUID(),
+          index: base + i + 1,
+          name: `Auto ${String(base + i + 1).padStart(2, "0")}`,
+          start_sec: seg.start_sec,
+          end_sec: seg.end_sec,
+          color: COLORS[(base + i) % COLORS.length],
+          crop_x_offset: 0,
+          selected_for_export: true,
+          export_status: "pending" as const,
+        }));
+        return [...prev, ...suggestions];
+      });
+      setStatus(`Added ${found.length} suggested clip(s) from loud moments.`);
+    } catch (err) {
+      setStatus(`Detection failed: ${String(err)}`);
+    } finally {
+      setSuggesting(false);
+    }
+  }, [sourcePath, sensitivity]);
 
   const onQualityChange = useCallback(
     (value: PreviewQuality) => {
@@ -1107,6 +1146,26 @@ export default function App() {
               <option value="start">Start time</option>
               <option value="duration">Duration</option>
               <option value="name">Name</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
+            <button
+              className="btn flex-1"
+              onClick={() => void runSuggest()}
+              disabled={!sourcePath || suggesting}
+              title="Scan the audio and queue clips around loud moments"
+            >
+              {suggesting ? "Analyzing…" : "Auto-detect loud moments"}
+            </button>
+            <select
+              value={sensitivity}
+              onChange={(e) => setSensitivity(Number(e.target.value))}
+              className="rounded border border-slate-700 bg-slate-900 px-1 py-1 text-xs"
+              title="How far above the average a moment must be"
+            >
+              <option value={2.5}>Loose</option>
+              <option value={1.5}>Normal</option>
+              <option value={0.8}>Strict</option>
             </select>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">

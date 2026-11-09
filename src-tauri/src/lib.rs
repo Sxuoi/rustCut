@@ -39,6 +39,7 @@ pub fn run() {
             exporter::detect_encoders,
             exporter::export_preflight,
             exporter::path_exists,
+            exporter::suggest_clips,
             exporter::start_export,
             exporter::waveform_peaks,
             previewer::prepare_preview

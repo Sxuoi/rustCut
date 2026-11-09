@@ -448,6 +448,35 @@ pub fn start_export(
     Ok(job_count)
 }
 
+/// Decodes the audio and reports loud moments as candidate clip ranges
+/// (PRD Phase 3). Uses the same PCM path as the waveform, at 0.25 s hops.
+#[tauri::command]
+pub fn suggest_clips(path: String, sensitivity: Option<f64>) -> Result<Vec<rustcut_core::peaks::LoudSegment>, String> {
+    let rate = rustcut_core::waveform::WAVEFORM_SAMPLE_RATE;
+    let args = rustcut_core::waveform::build_waveform_args(Path::new(&path), rate);
+    let output = Command::new(resolve_tool("RUSTCUT_FFMPEG", "ffmpeg"))
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to start ffmpeg: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("audio extraction failed: {}", stderr.trim()));
+    }
+    let samples = rustcut_core::waveform::pcm_s16le_samples(&output.stdout);
+    if samples.is_empty() {
+        return Err("this file has no audio track".to_string());
+    }
+    let duration_sec = samples.len() as f64 / rate as f64;
+    let hop_samples = (rate as f64 * 0.25).max(1.0) as usize;
+    let buckets = (samples.len() / hop_samples).max(1);
+    let peaks = rustcut_core::waveform::compute_peaks(&samples, buckets);
+    Ok(rustcut_core::peaks::detect_loud_segments(
+        &peaks,
+        duration_sec,
+        sensitivity.unwrap_or(1.5),
+    ))
+}
+
 /// Extracts timeline waveform peaks (PRD 4.1) by decoding the audio track
 /// to mono PCM and reducing it to `buckets` peak magnitudes.
 #[tauri::command]

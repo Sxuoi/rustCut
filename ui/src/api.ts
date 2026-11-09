@@ -231,6 +231,24 @@ export interface Preflight {
   ok: boolean;
 }
 
+export interface LoudSegment {
+  start_sec: number;
+  end_sec: number;
+  score: number;
+}
+
+/** Candidate clips around loud moments in the source audio (PRD Phase 3). */
+export async function suggestClips(
+  path: string,
+  sensitivity: number = 1.5,
+): Promise<LoudSegment[]> {
+  if (!isTauri) {
+    throw new Error("suggest_clips requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<LoudSegment[]>("suggest_clips", { path, sensitivity });
+}
+
 /** Estimated output size and free space on the target drive (PRD 9). */
 export async function exportPreflight(
   state: ProjectState,
