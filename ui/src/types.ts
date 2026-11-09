@@ -35,6 +35,13 @@ export interface ExportSettings {
   crop_x_offset: number;
   parallel_jobs: number;
   encoder: string;
+  burn_captions: boolean;
+}
+
+export interface CaptionSegment {
+  start_sec: number;
+  end_sec: number;
+  text: string;
 }
 
 export interface ProjectState {
@@ -42,6 +49,7 @@ export interface ProjectState {
   source_video: SourceVideo;
   export_settings: ExportSettings;
   clips: Clip[];
+  captions: CaptionSegment[];
 }
 
 /** Decoded ffprobe facts (rustcut-core `probe::MediaInfo`). */

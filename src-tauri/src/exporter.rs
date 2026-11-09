@@ -19,7 +19,7 @@ use rustcut_core::naming::{build_output_stem, NamingContext};
 use rustcut_core::probe::{parse_ffprobe_json, MediaInfo};
 use rustcut_core::project::ProjectState;
 use rustcut_core::VideoEncoder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 pub const EVENT_PROGRESS: &str = "export://progress";
@@ -118,6 +118,145 @@ pub fn canvas_info(width: u32, height: u32) -> CanvasInfo {
 #[tauri::command]
 pub fn path_exists(path: String) -> bool {
     Path::new(&path).exists()
+}
+
+/// Where the local faster-whisper runtime lives (overridable for packaging).
+fn asr_python() -> String {
+    if let Ok(path) = std::env::var("RUSTCUT_ASR_PYTHON") {
+        return path;
+    }
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("rustcut")
+        .join("asr")
+        .join(".venv")
+        .join("Scripts")
+        .join("python.exe")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn asr_script() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("rustcut").join("asr").join("transcribe.py")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptionSegment {
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptInfo {
+    #[serde(default)]
+    pub language: String,
+    #[serde(default)]
+    pub segments: Vec<CaptionSegment>,
+    #[serde(default)]
+    pub cached: bool,
+}
+
+fn cache_path_for(video: &str) -> std::path::PathBuf {
+    Path::new(video).with_extension("captions.json")
+}
+
+/// Transcribes a video with local Whisper (PRD Phase 3). The transcript is
+/// cached next to the video and reused while the source is unchanged.
+#[tauri::command]
+pub async fn transcribe(
+    app: AppHandle,
+    path: String,
+    model: Option<String>,
+) -> Result<TranscriptInfo, String> {
+    let model = model.unwrap_or_else(|| "small".to_string());
+    tauri::async_runtime::spawn_blocking(move || transcribe_blocking(&app, &path, &model))
+        .await
+        .map_err(|e| format!("transcription task failed: {e}"))?
+}
+
+fn transcribe_blocking(_app: &AppHandle, path: &str, model: &str) -> Result<TranscriptInfo, String> {
+    let cache = cache_path_for(path);
+    let source_mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok();
+    if let (Ok(text), Some(source_time)) = (std::fs::read_to_string(&cache), source_mtime) {
+        if let Ok(cached) = serde_json::from_str::<TranscriptInfo>(&text) {
+            let fresh = std::fs::metadata(&cache)
+                .and_then(|m| m.modified())
+                .map(|cache_time| cache_time >= source_time)
+                .unwrap_or(false);
+            if fresh && !cached.segments.is_empty() {
+                return Ok(TranscriptInfo {
+                    cached: true,
+                    ..cached
+                });
+            }
+        }
+    }
+
+    let wav = std::env::temp_dir().join(format!(
+        "rustcut_asr_{}.wav",
+        std::process::id()
+    ));
+    let ffmpeg = resolve_tool("RUSTCUT_FFMPEG", "ffmpeg");
+    let status = Command::new(&ffmpeg)
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            path,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+        ])
+        .arg(&wav)
+        .status()
+        .map_err(|e| format!("failed to start ffmpeg: {e}"))?;
+    if !status.success() {
+        return Err("could not extract audio from the source".to_string());
+    }
+
+    let output = Command::new(asr_python())
+        .arg(asr_script())
+        .arg(&wav)
+        .arg(model)
+        .output()
+        .map_err(|e| format!("failed to start the local Whisper runtime: {e}"))?;
+    let _ = std::fs::remove_file(&wav);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail: String = stderr.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ");
+        return Err(format!("transcription failed: {tail}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: TranscriptInfo =
+        serde_json::from_str(stdout.trim()).map_err(|e| format!("bad transcript output: {e}"))?;
+    if parsed.segments.is_empty() {
+        return Err("Whisper returned no speech in this file".to_string());
+    }
+
+    let cacheable = TranscriptInfo {
+        language: parsed.language.clone(),
+        segments: parsed.segments.clone(),
+        cached: false,
+    };
+    if let Ok(text) = serde_json::to_string(&cacheable) {
+        let _ = std::fs::write(&cache, text);
+    }
+    Ok(parsed)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -391,6 +530,27 @@ pub fn start_export(
                         message: None,
                     },
                 );
+
+                if let Some(subs) = &job.subtitles {
+                    // The SRT is written next to the output even when it is
+                    // not burned in, so the export always ships captions.
+                    if let Some(parent) = subs.path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(err) = std::fs::write(&subs.path, &subs.text) {
+                        collected
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(ExportResult {
+                                clip_id: job.clip_id,
+                                index: job.index,
+                                output: job.output.clone(),
+                                status: ExportStatus::Failed,
+                                message: Some(format!("could not write captions: {err}")),
+                            });
+                        continue;
+                    }
+                }
 
                 let outcome = run_ffmpeg(
                     &ffmpeg,

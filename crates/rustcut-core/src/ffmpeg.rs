@@ -198,6 +198,7 @@ pub fn build_reencode_args(
     canvas: (u32, u32),
     crop_style: CropStyle,
     crop_x_offset: f64,
+    subtitles: Option<&str>,
     encoder: &VideoEncoder,
 ) -> Vec<String> {
     let (w, h) = canvas;
@@ -218,11 +219,15 @@ pub fn build_reencode_args(
     match crop_style {
         CropStyle::CenterCrop => {
             let x = crop_x_px(crop_x_offset, w, h);
-            let filter = format!(
+            let mut filter = format!(
                 "scale={w}:{h}:force_original_aspect_ratio=decrease,\
                  pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,\
                  crop={out_w}:{out_h}:{x}:0"
             );
+            if let Some(sub) = subtitles {
+                // Burned after the crop, so captions sit inside the 9:16 frame.
+                filter.push_str(&format!(",subtitles='{sub}'"));
+            }
             args.push("-vf".into());
             args.push(filter);
         }
@@ -230,7 +235,7 @@ pub fn build_reencode_args(
             // The full frame stays visible over a blurred fill of the same
             // source; no canvas pad and no X offset (PRD 4.4). Output keeps
             // the 9:16 window dimensions so both styles share one size.
-            let filter = format!(
+            let mut filter = format!(
                 "[0:v]split=2[bg][fg];\
                  [bg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,\
                  crop={out_w}:{out_h},boxblur=20:2,setsar=1[bgv];\
@@ -238,10 +243,17 @@ pub fn build_reencode_args(
                  setsar=1[fgv];\
                  [bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]"
             );
+            let map_label = match subtitles {
+                Some(sub) => {
+                    filter.push_str(&format!(";[vout]subtitles='{sub}'[subbed]"));
+                    "[subbed]"
+                }
+                None => "[vout]",
+            };
             args.push("-filter_complex".into());
             args.push(filter);
             args.push("-map".into());
-            args.push("[vout]".into());
+            args.push(map_label.into());
             args.push("-map".into());
             args.push("0:a?".into());
         }
@@ -322,6 +334,7 @@ mod tests {
             (1920, 1080),
             CropStyle::CenterCrop,
             0.0,
+            None,
             &VideoEncoder::software_default(),
         );
         let vf = args[args.iter().position(|a| a == "-vf").unwrap() + 1].clone();
@@ -369,6 +382,7 @@ mod tests {
             (1920, 1080),
             CropStyle::BlurredBackground,
             0.5, // offset is ignored by this style
+            None,
             &VideoEncoder::software_default(),
         );
         let fc = args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1].clone();

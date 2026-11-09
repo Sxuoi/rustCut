@@ -39,6 +39,16 @@ pub struct ExportJob {
     pub end_sec: f64,
     pub output: PathBuf,
     pub args: Vec<String>,
+    /// Re-timed captions for this clip: always written as .srt, burned into
+    /// the video when `burned` is true (re-encode mode only).
+    pub subtitles: Option<ClipSubtitles>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClipSubtitles {
+    pub path: PathBuf,
+    pub text: String,
+    pub burned: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +136,25 @@ pub fn plan_export(
     let mut jobs = Vec::with_capacity(valid.len());
     for (clip, stem) in valid.iter().zip(stems.iter()) {
         let output = Path::new(&settings.output_dir).join(format!("{stem}.mp4"));
+        let subtitles = if state.captions.is_empty() {
+            None
+        } else {
+            let text = crate::captions::build_srt(&state.captions, clip.start_sec, clip.end_sec);
+            if text.is_empty() {
+                None
+            } else {
+                let burned = settings.burn_captions && settings.mode == ExportMode::SmartReencode;
+                Some(ClipSubtitles {
+                    path: output.with_extension("srt"),
+                    text,
+                    burned,
+                })
+            }
+        };
+        let subtitle_filter = subtitles
+            .as_ref()
+            .filter(|s| s.burned)
+            .map(|s| crate::captions::escape_subtitles_path(&s.path.to_string_lossy()));
         let args = match settings.mode {
             ExportMode::LosslessCopy => {
                 ffmpeg::build_lossless_args(input, clip.start_sec, clip.end_sec, &output)
@@ -138,6 +167,7 @@ pub fn plan_export(
                 canvas,
                 settings.crop_style,
                 clip.crop_x_offset,
+                subtitle_filter.as_deref(),
                 encoder,
             ),
         };
@@ -149,6 +179,7 @@ pub fn plan_export(
             end_sec: clip.end_sec,
             output,
             args,
+            subtitles,
         });
     }
 

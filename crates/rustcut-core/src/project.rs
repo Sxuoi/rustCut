@@ -42,6 +42,13 @@ pub struct ExportSettings {
     /// Older project files default to `auto`.
     #[serde(default = "default_encoder")]
     pub encoder: String,
+    /// Burn captions into re-encoded exports (PRD Phase 3).
+    #[serde(default = "default_burn_captions")]
+    pub burn_captions: bool,
+}
+
+fn default_burn_captions() -> bool {
+    true
 }
 
 fn default_encoder() -> String {
@@ -61,6 +68,7 @@ impl ExportSettings {
             crop_x_offset: 0.0,
             parallel_jobs: 1,
             encoder: default_encoder(),
+            burn_captions: default_burn_captions(),
         }
     }
 }
@@ -71,6 +79,9 @@ pub struct ProjectState {
     pub source_video: SourceVideo,
     pub export_settings: ExportSettings,
     pub clips: Vec<Clip>,
+    /// Transcript in source time; empty until captions are generated.
+    #[serde(default)]
+    pub captions: Vec<crate::captions::Caption>,
 }
 
 #[derive(Debug)]
@@ -113,6 +124,7 @@ impl ProjectState {
             source_video,
             export_settings,
             clips: Vec::new(),
+            captions: Vec::new(),
         }
     }
 

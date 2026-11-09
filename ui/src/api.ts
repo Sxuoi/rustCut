@@ -237,6 +237,30 @@ export interface LoudSegment {
   score: number;
 }
 
+export interface CaptionSegment {
+  start_sec: number;
+  end_sec: number;
+  text: string;
+}
+
+export interface TranscriptInfo {
+  language: string;
+  segments: CaptionSegment[];
+  cached: boolean;
+}
+
+/** Local Whisper transcription; caches next to the source (PRD Phase 3). */
+export async function transcribe(
+  path: string,
+  model: string = "small",
+): Promise<TranscriptInfo> {
+  if (!isTauri) {
+    throw new Error("transcribe requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<TranscriptInfo>("transcribe", { path, model });
+}
+
 /** Candidate clips around loud moments in the source audio (PRD Phase 3). */
 export async function suggestClips(
   path: string,

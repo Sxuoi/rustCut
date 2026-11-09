@@ -5,6 +5,7 @@
 //! files - everything here is unit-testable in isolation.
 
 pub mod clip;
+pub mod captions;
 pub mod export;
 pub mod ffmpeg;
 pub mod naming;

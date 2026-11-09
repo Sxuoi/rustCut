@@ -40,6 +40,7 @@ pub fn run() {
             exporter::export_preflight,
             exporter::path_exists,
             exporter::suggest_clips,
+            exporter::transcribe,
             exporter::start_export,
             exporter::waveform_peaks,
             previewer::prepare_preview

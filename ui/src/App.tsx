@@ -15,6 +15,7 @@ import {
   canvasInfo,
   exportPreflight,
   suggestClips,
+  transcribe,
   probeMedia,
   saveProject,
   startExport,
@@ -22,6 +23,7 @@ import {
 } from "./api";
 import type {
   Clip,
+  CaptionSegment,
   ExportFinishedEvent,
   ExportProgressEvent,
   MediaInfo,
@@ -132,6 +134,10 @@ export default function App() {
   } | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [sensitivity, setSensitivity] = useState(1.5);
+  const [captions, setCaptions] = useState<CaptionSegment[]>([]);
+  const [captionsLanguage, setCaptionsLanguage] = useState("");
+  const [burnCaptions, setBurnCaptions] = useState(true);
+  const [transcribing, setTranscribing] = useState(false);
   const videoPaneRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const trimRef = useRef<{ id: string; edge: "in" | "out"; startSec: number; endSec: number } | null>(
@@ -216,6 +222,8 @@ export default function App() {
       setNamingPattern(saved.export_settings.naming_pattern || "{index}_{name}");
       setWorkers(saved.export_settings.parallel_jobs || 1);
       setEncoderId(saved.export_settings.encoder || "auto");
+      setBurnCaptions(saved.export_settings.burn_captions ?? true);
+      setCaptions(saved.captions ?? []);
       setDuration((d) => d || saved.source_video.duration_sec || 0);
       setStatus(`${mediaLine} Restored ${saved.clips.length} saved clip(s) from the project file.`);
     } catch {
@@ -298,6 +306,29 @@ export default function App() {
       setSuggesting(false);
     }
   }, [sourcePath, sensitivity]);
+
+  const runCaptions = useCallback(async () => {
+    if (!sourcePath) {
+      setStatus("Open a video first.");
+      return;
+    }
+    setTranscribing(true);
+    setStatus("Transcribing with local Whisper (the first run downloads the model)…");
+    try {
+      const result = await transcribe(sourcePath, "small");
+      setCaptions(result.segments);
+      setCaptionsLanguage(result.language);
+      setStatus(
+        result.cached
+          ? `Loaded ${result.segments.length} cached caption cue(s) (${result.language}).`
+          : `Transcribed ${result.segments.length} cue(s) (${result.language}).`,
+      );
+    } catch (err) {
+      setStatus(`Captioning failed: ${String(err)}`);
+    } finally {
+      setTranscribing(false);
+    }
+  }, [sourcePath]);
 
   const onQualityChange = useCallback(
     (value: PreviewQuality) => {
@@ -496,10 +527,12 @@ export default function App() {
         crop_x_offset: 0,
         parallel_jobs: workers,
         encoder: encoderId,
+        burn_captions: burnCaptions,
       },
       clips,
+      captions,
     };
-  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, namingPattern, workers, encoderId, clips]);
+  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, namingPattern, workers, encoderId, burnCaptions, captions, clips]);
 
   const save = useCallback(() => {
     // The project file lives next to the source video (PRD 4.5), so the
@@ -1167,6 +1200,31 @@ export default function App() {
               <option value={1.5}>Normal</option>
               <option value={0.8}>Strict</option>
             </select>
+          </div>
+          <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
+            <button
+              className="btn flex-1"
+              onClick={() => void runCaptions()}
+              disabled={!sourcePath || transcribing}
+              title="Transcribe with local Whisper, then write .srt per clip"
+            >
+              {transcribing
+                ? "Transcribing…"
+                : captions.length > 0
+                  ? `Captions: ${captions.length}${captionsLanguage ? ` (${captionsLanguage})` : ""}`
+                  : "Auto captions"}
+            </button>
+            <label
+              className="flex items-center gap-1 text-xs text-slate-400"
+              title="Burn captions into re-encoded exports; the .srt is always written"
+            >
+              <input
+                type="checkbox"
+                checked={burnCaptions}
+                onChange={(e) => setBurnCaptions(e.target.checked)}
+              />
+              burn
+            </label>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {clips.length === 0 ? (
