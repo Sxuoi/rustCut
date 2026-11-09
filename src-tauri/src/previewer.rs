@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::UNIX_EPOCH;
 
@@ -23,13 +24,22 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::exporter::{resolve_tool, with_progress_args};
+use crate::fileserver;
 
 pub const EVENT_PREVIEW_PROGRESS: &str = "preview://progress";
 
+/// Serialises proxy builds. Two callers for the same source (the UI mounts
+/// twice in React StrictMode) would otherwise both transcode into the same
+/// path and produce a corrupt file.
+static ENCODE_LOCK: Mutex<()> = Mutex::new(());
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PreviewInfo {
-    /// File the webview should load (`asset://` conversion happens in JS).
+    /// File the webview should load (kept for diagnostics and cache paths).
     pub preview_path: String,
+    /// Loopback HTTP URL the player actually loads. `asset://` stalls the
+    /// WebView2 media pipeline, so media is streamed over localhost instead.
+    pub preview_url: String,
     /// True when a proxy was built instead of using the source directly.
     pub transcoded: bool,
     pub source_codec: String,
@@ -108,6 +118,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
     let Some(reason) = proxy_reason(source, &info) else {
         return Ok(PreviewInfo {
             preview_path: path.to_string(),
+            preview_url: fileserver::register(source),
             transcoded: false,
             source_codec: info.codec_name,
             source_format: info.format_name,
@@ -124,6 +135,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
     {
         return Ok(PreviewInfo {
             preview_path: target.to_string_lossy().into_owned(),
+            preview_url: fileserver::register(&target),
             transcoded: true,
             source_codec: info.codec_name,
             source_format: info.format_name,
@@ -138,14 +150,39 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
             .map_err(|e| format!("cannot create preview cache directory: {e}"))?;
     }
 
+    let _guard = ENCODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Another caller may have finished while this one waited for the lock.
+    if std::fs::metadata(&target)
+        .map(|m| m.len() > 4096)
+        .unwrap_or(false)
+    {
+        return Ok(PreviewInfo {
+            preview_path: target.to_string_lossy().into_owned(),
+            preview_url: fileserver::register(&target),
+            transcoded: true,
+            source_codec: info.codec_name,
+            source_format: info.format_name,
+            reason: Some(reason),
+            cached: true,
+            encoder: None,
+        });
+    }
+
+    // Encode into a side file and rename into place, so the player can never
+    // open a half-written proxy.
+    let part = PathBuf::from(format!("{}.part.mp4", target.to_string_lossy()));
     let ffmpeg = resolve_tool("RUSTCUT_FFMPEG", "ffmpeg");
     let mut last_error = String::new();
     for encoder in ProxyEncoder::ALL {
-        let args = build_proxy_args(source, &target, info.duration_sec, encoder);
+        let args = build_proxy_args(source, &part, info.duration_sec, encoder);
         match run_ffmpeg(&ffmpeg, &args, info.duration_sec, app, encoder) {
             Ok(()) => {
+                std::fs::rename(&part, &target)
+                    .map_err(|e| format!("cannot finalise preview: {e}"))?;
                 return Ok(PreviewInfo {
                     preview_path: target.to_string_lossy().into_owned(),
+                    preview_url: fileserver::register(&target),
                     transcoded: true,
                     source_codec: info.codec_name,
                     source_format: info.format_name,
@@ -155,8 +192,7 @@ fn prepare_preview_blocking(app: &AppHandle, path: &str) -> Result<PreviewInfo, 
                 });
             }
             Err(err) => {
-                // A half-written proxy must never be reused.
-                let _ = std::fs::remove_file(&target);
+                let _ = std::fs::remove_file(&part);
                 last_error = format!("{} ({})", err, encoder.label());
             }
         }

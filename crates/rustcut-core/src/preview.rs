@@ -88,7 +88,12 @@ impl ProxyEncoder {
 }
 
 /// Bumped when the proxy command changes, so stale caches are rebuilt.
-pub const PREVIEW_FORMAT_VERSION: &str = "v3";
+pub const PREVIEW_FORMAT_VERSION: &str = "v4";
+
+/// Preview proxies are capped at 30 fps: the player dropped half the frames
+/// of a 1080p60 proxy on a 4-core CPU, and an editor preview does not need
+/// 60 fps. Exports still use the untouched source.
+pub const PROXY_FPS: &str = "30";
 
 /// ffmpeg arguments that build the H.264 preview proxy.
 ///
@@ -137,12 +142,14 @@ pub fn build_proxy_args(
             args.push("-pix_fmt".into());
             args.push("yuv420p".into());
             // Software frames are plain memory, so the scale filter is cheap
-            // here; it keeps the proxy small enough to seek quickly.
+            // here; 720p keeps the portable path usable on weak CPUs.
             args.push("-vf".into());
-            args.push("scale='min(1600,iw)':-2".into());
+            args.push("scale=-2:720".into());
         }
     }
 
+    args.push("-r".into());
+    args.push(PROXY_FPS.into());
     args.push("-c:a".into());
     args.push("aac".into());
     args.push("-b:a".into());
@@ -214,6 +221,8 @@ mod tests {
         assert!(joined.contains("-c:a aac"));
         assert!(joined.contains("0:a:0?"));
         assert!(!joined.contains("-hwaccel qsv"));
+        assert!(joined.contains("-r 30"));
+        assert!(joined.contains("scale=-2:720"));
         assert_eq!(args.last().unwrap(), "out.mp4");
     }
 

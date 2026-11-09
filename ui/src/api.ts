@@ -89,6 +89,8 @@ export async function probeMedia(path: string): Promise<MediaInfo> {
 export interface PreviewInfo {
   /** File the player should load (not yet converted to a webview URL). */
   preview_path: string;
+  /** Loopback HTTP URL to assign to the <video> element. */
+  preview_url: string;
   transcoded: boolean;
   source_codec: string;
   source_format: string;

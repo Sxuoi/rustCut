@@ -28,6 +28,10 @@ const FPS_FALLBACK = 30;
 const COLORS = ["#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#06B6D4"];
 const SPEEDS = [0.5, 1, 1.25, 1.5, 2, 3];
 
+// Guards the dev-only ?devvideo deep link against React StrictMode's
+// double-mounted effect.
+let devVideoRequested = false;
+
 type Preset = "lossless_copy" | "smart_reencode" | "blurred_background";
 
 // A 9:16 window on a 16:9 box spans (9/16)^2 of that box's width.
@@ -89,86 +93,102 @@ export default function App() {
     setStatus(`Loaded ${file.name} (browser preview: no ffprobe/export)`);
   }, []);
 
+  const loadPath = useCallback(async (path: string, directUrl: string) => {
+    setVideoUrl(null);
+    setSourcePath(path);
+    setSourceName(path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "");
+    setClips([]);
+    setProgress({});
+    setMedia(null);
+    setPeaks([]);
+    setSelectedClipId(null);
+    setStatus("Preparing preview…");
+
+    // HEVC, 10-bit and Matroska sources cannot be decoded by the embedded
+    // player; the backend builds a cached H.264 proxy for those. The source
+    // file is never modified, exports still read the original.
+    let playableUrl = directUrl;
+    let previewNote = "";
+    const unsubscribe = await onPreviewProgress((fraction) => {
+      setStatus(`Preparing preview… ${Math.round(fraction * 100)}%`);
+    });
+    try {
+      const preview = await preparePreview(path);
+      playableUrl = preview.preview_url;
+      if (preview.transcoded) {
+        previewNote = ` ${preview.source_codec.toUpperCase()} source: previewing a cached H.264 copy${
+          preview.encoder ? ` (${preview.encoder})` : ""
+        }${preview.cached ? ", already built" : ", built now"}.`;
+      }
+    } catch (err) {
+      previewNote = ` Preview could not be prepared: ${String(err)}.`;
+    } finally {
+      unsubscribe();
+    }
+    setVideoUrl(playableUrl);
+
+    let mediaLine = "";
+    try {
+      const info = await probeMedia(path);
+      setMedia(info);
+      setDuration(info.duration_sec);
+      mediaLine = `Loaded ${info.width}x${info.height}, ${info.fps.toFixed(3)} fps, ${info.codec_name}.`;
+    } catch (err) {
+      mediaLine = `Video opened, but ffprobe failed: ${String(err)}`;
+    }
+    mediaLine = `${mediaLine}${previewNote}`;
+    // Waveform for the timeline (PRD 4.1); audio-less files just skip it.
+    if (isTauri) {
+      void waveformPeaks(path, 1200)
+        .then(setPeaks)
+        .catch(() => setPeaks([]));
+    }
+    // Crash recovery (PRD 4.5): restore saved markers when the .rustcut
+    // file for this video exists; a missing file is the normal case.
+    try {
+      const saved = await loadProject(projectPathFor(path));
+      setClips(saved.clips);
+      setPreset(
+        saved.export_settings.mode === "lossless_copy"
+          ? "lossless_copy"
+          : saved.export_settings.crop_style === "blurred_background"
+            ? "blurred_background"
+            : "smart_reencode",
+      );
+      setOutputDir(saved.export_settings.output_dir || "");
+      setDuration((d) => d || saved.source_video.duration_sec || 0);
+      setStatus(`${mediaLine} Restored ${saved.clips.length} saved clip(s) from the project file.`);
+    } catch {
+      setStatus(mediaLine);
+    }
+  }, []);
+
   const openVideo = useCallback(async () => {
     try {
       const picked = await openVideoDialog();
       if (!picked) {
         return;
       }
-      setVideoUrl(null);
-      setSourcePath(picked.path);
-      setSourceName(picked.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "");
-      setClips([]);
-      setProgress({});
-      setMedia(null);
-      setPeaks([]);
-      setSelectedClipId(null);
-      setStatus("Preparing preview…");
-
-      // HEVC, 10-bit and Matroska sources cannot be decoded by the embedded
-      // player; the backend builds a cached H.264 proxy for those. The source
-      // file is never modified, exports still read the original.
-      let playableUrl = picked.url;
-      let previewNote = "";
-      const unsubscribe = await onPreviewProgress((fraction) => {
-        setStatus(`Preparing preview… ${Math.round(fraction * 100)}%`);
-      });
-      try {
-        const preview = await preparePreview(picked.path);
-        if (preview.transcoded) {
-          const { convertFileSrc } = await import("@tauri-apps/api/core");
-          playableUrl = convertFileSrc(preview.preview_path);
-          previewNote = ` ${preview.source_codec.toUpperCase()} source: previewing a cached H.264 copy${
-            preview.encoder ? ` (${preview.encoder})` : ""
-          }${preview.cached ? ", already built" : ", built now"}.`;
-        }
-      } catch (err) {
-        previewNote = ` Preview could not be prepared: ${String(err)}.`;
-      } finally {
-        unsubscribe();
-      }
-      setVideoUrl(playableUrl);
-
-      let mediaLine = "";
-      try {
-        const info = await probeMedia(picked.path);
-        setMedia(info);
-        setDuration(info.duration_sec);
-        mediaLine = `Loaded ${info.width}x${info.height}, ${info.fps.toFixed(3)} fps, ${info.codec_name}.`;
-      } catch (err) {
-        mediaLine = `Video opened, but ffprobe failed: ${String(err)}`;
-      }
-      mediaLine = `${mediaLine}${previewNote}`;
-      // Waveform for the timeline (PRD 4.1); audio-less files just skip it.
-      if (isTauri) {
-        void waveformPeaks(picked.path, 1200)
-          .then(setPeaks)
-          .catch(() => setPeaks([]));
-      }
-      // Crash recovery (PRD 4.5): restore saved markers when the .rustcut
-      // file for this video exists; a missing file is the normal case.
-      try {
-        const saved = await loadProject(projectPathFor(picked.path));
-        setClips(saved.clips);
-        setPreset(
-          saved.export_settings.mode === "lossless_copy"
-            ? "lossless_copy"
-            : saved.export_settings.crop_style === "blurred_background"
-              ? "blurred_background"
-              : "smart_reencode",
-        );
-        setOutputDir(saved.export_settings.output_dir || "");
-        setDuration((d) => d || saved.source_video.duration_sec || 0);
-        setStatus(
-          `${mediaLine} Restored ${saved.clips.length} saved clip(s) from the project file.`,
-        );
-      } catch {
-        setStatus(mediaLine);
-      }
+      await loadPath(picked.path, picked.url);
     } catch (err) {
       setStatus(`Open failed: ${String(err)}`);
     }
-  }, []);
+  }, [loadPath]);
+
+  // Dev-only deep link: /?devvideo=<absolute path> loads a file without the
+  // native dialog, so the player can be exercised in automated runs. The
+  // module-level flag keeps React StrictMode's double mount from loading the
+  // same file twice.
+  useEffect(() => {
+    if (!import.meta.env.DEV || devVideoRequested) {
+      return;
+    }
+    const devPath = new URLSearchParams(window.location.search).get("devvideo");
+    if (devPath) {
+      devVideoRequested = true;
+      void loadPath(devPath, "");
+    }
+  }, [loadPath]);
 
   const chooseOutput = useCallback(async () => {
     const dir = await pickOutputFolder();
@@ -558,13 +578,13 @@ export default function App() {
       : 0;
 
   return (
-    <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="flex items-center gap-4 border-b border-slate-800 px-4 py-2">
-        <span className="text-lg font-semibold tracking-tight">RustCut</span>
-        <span className="text-sm text-slate-400">
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-950 text-slate-100">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-800 px-4 py-2">
+        <span className="shrink-0 text-lg font-semibold tracking-tight">RustCut</span>
+        <span className="min-w-0 flex-1 truncate text-sm text-slate-400">
           {sourceName ? `Project: ${sourceName}.rustcut` : "No project loaded"}
         </span>
-        <div className="ml-auto flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
           {isTauri && (
             <>
               <button className="btn" onClick={openVideo}>
@@ -611,12 +631,12 @@ export default function App() {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <section className="flex min-w-0 flex-[2] flex-col">
-          <div className="flex flex-1 items-center justify-center bg-black">
+        <section className="flex min-h-0 min-w-0 flex-[2] flex-col">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
             {videoUrl ? (
               <div
                 ref={wrapperRef}
-                className="relative inline-flex max-h-full"
+                className="relative inline-flex max-h-full max-w-full"
                 onPointerMove={onOverlayDrag}
                 onPointerUp={() => setDragging(false)}
                 onPointerLeave={() => setDragging(false)}
@@ -624,7 +644,7 @@ export default function App() {
                 <video
                   ref={videoRef}
                   src={videoUrl}
-                  className="max-h-full max-w-full"
+                  className="max-h-full max-w-full object-contain"
                   onTimeUpdate={onTimeUpdate}
                   onLoadedMetadata={onLoadedMetadata}
                   onPlay={() => setPlaying(true)}
@@ -683,7 +703,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 px-4 py-2 text-sm">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-800 px-4 py-2 text-sm">
             <button className="btn" onClick={() => seekTo(0)}>
               |&lt;
             </button>
@@ -721,7 +741,7 @@ export default function App() {
           </div>
         </section>
 
-        <aside className="flex w-80 flex-col border-l border-slate-800">
+        <aside className="flex w-80 shrink-0 flex-col border-l border-slate-800 max-[1100px]:w-72">
           <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
             <span className="font-semibold">Clip Queue ({clips.length})</span>
             <span className="text-xs text-slate-400">{selectedCount} selected</span>
@@ -830,7 +850,7 @@ export default function App() {
         </aside>
       </main>
 
-      <footer className="border-t border-slate-800 px-4 py-2">
+      <footer className="shrink-0 border-t border-slate-800 px-4 py-2">
         <div className="mb-2 text-xs text-slate-400">
           Timeline - full duration {fmtTime(duration)}
           {markIn !== null ? ` | In ${fmtTime(markIn)}` : ""}
@@ -879,7 +899,9 @@ export default function App() {
             style={{ left: `${(current / (duration || 1)) * 100}%` }}
           />
         </div>
-        <div className="mt-2 text-xs text-slate-500">{status}</div>
+        <div className="mt-2 truncate text-xs text-slate-500" title={status}>
+          {status}
+        </div>
       </footer>
     </div>
   );
