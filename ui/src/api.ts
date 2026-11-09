@@ -86,6 +86,42 @@ export async function probeMedia(path: string): Promise<MediaInfo> {
   return invoke<MediaInfo>("probe_media", { path });
 }
 
+export interface PreviewInfo {
+  /** File the player should load (not yet converted to a webview URL). */
+  preview_path: string;
+  transcoded: boolean;
+  source_codec: string;
+  source_format: string;
+  reason: string | null;
+  cached: boolean;
+  /** Encoder that produced the proxy (`qsv`, `software`); null when cached. */
+  encoder: string | null;
+}
+
+/**
+ * Asks the backend for a playable preview of `path`. HEVC, 10-bit and
+ * Matroska sources are transcoded once into a cached H.264 proxy; everything
+ * the embedded player can decode is returned unchanged.
+ */
+export async function preparePreview(path: string): Promise<PreviewInfo> {
+  if (!isTauri) {
+    throw new Error("prepare_preview requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<PreviewInfo>("prepare_preview", { path });
+}
+
+/** Transcode progress for the preview proxy (0.0..=1.0). */
+export async function onPreviewProgress(
+  onProgress: (fraction: number, encoder: string) => void,
+): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<{ fraction: number; encoder: string }>(
+    "preview://progress",
+    (e) => onProgress(e.payload.fraction, e.payload.encoder),
+  );
+}
+
 /** Timeline waveform peaks in `0.0..=1.0`, one value per bucket. */
 export async function waveformPeaks(
   path: string,

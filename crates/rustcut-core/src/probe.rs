@@ -15,6 +15,10 @@ pub struct MediaInfo {
     /// Bits per second, from the container or the video stream.
     pub bitrate_bps: f64,
     pub codec_name: String,
+    /// Pixel format such as `yuv420p` or `yuv420p10le` (10-bit needs a
+    /// preview proxy because the embedded player only decodes 8-bit H.264).
+    #[serde(default)]
+    pub pix_fmt: String,
     pub format_name: String,
 }
 
@@ -107,6 +111,11 @@ pub fn parse_ffprobe_json(raw: &str) -> Result<MediaInfo, ProbeError> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let pix_fmt = video
+        .get("pix_fmt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     Ok(MediaInfo {
         duration_sec,
@@ -115,6 +124,7 @@ pub fn parse_ffprobe_json(raw: &str) -> Result<MediaInfo, ProbeError> {
         fps,
         bitrate_bps,
         codec_name,
+        pix_fmt,
         format_name,
     })
 }

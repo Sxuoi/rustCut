@@ -26,7 +26,7 @@ pub const EVENT_FINISHED: &str = "export://finished";
 /// Tool resolution: `RUSTCUT_FFMPEG` / `RUSTCUT_FFPROBE` override the binary
 /// name; otherwise the tools are expected on PATH (they ship as Tauri
 /// sidecars in the packaged build).
-fn resolve_tool(env_key: &str, default: &str) -> String {
+pub(crate) fn resolve_tool(env_key: &str, default: &str) -> String {
     std::env::var(env_key).unwrap_or_else(|_| default.to_string())
 }
 

@@ -9,6 +9,7 @@ use std::path::Path;
 use rustcut_core::ProjectState;
 
 mod exporter;
+mod previewer;
 
 #[tauri::command]
 fn load_project(path: String) -> Result<ProjectState, String> {
@@ -29,7 +30,8 @@ pub fn run() {
             save_project,
             exporter::probe_media,
             exporter::start_export,
-            exporter::waveform_peaks
+            exporter::waveform_peaks,
+            previewer::prepare_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running RustCut");

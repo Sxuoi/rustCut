@@ -6,6 +6,8 @@ import {
   onExportEvents,
   openVideoDialog,
   pickOutputFolder,
+  onPreviewProgress,
+  preparePreview,
   probeMedia,
   saveProject,
   startExport,
@@ -93,7 +95,7 @@ export default function App() {
       if (!picked) {
         return;
       }
-      setVideoUrl(picked.url);
+      setVideoUrl(null);
       setSourcePath(picked.path);
       setSourceName(picked.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "");
       setClips([]);
@@ -101,6 +103,32 @@ export default function App() {
       setMedia(null);
       setPeaks([]);
       setSelectedClipId(null);
+      setStatus("Preparing preview…");
+
+      // HEVC, 10-bit and Matroska sources cannot be decoded by the embedded
+      // player; the backend builds a cached H.264 proxy for those. The source
+      // file is never modified, exports still read the original.
+      let playableUrl = picked.url;
+      let previewNote = "";
+      const unsubscribe = await onPreviewProgress((fraction) => {
+        setStatus(`Preparing preview… ${Math.round(fraction * 100)}%`);
+      });
+      try {
+        const preview = await preparePreview(picked.path);
+        if (preview.transcoded) {
+          const { convertFileSrc } = await import("@tauri-apps/api/core");
+          playableUrl = convertFileSrc(preview.preview_path);
+          previewNote = ` ${preview.source_codec.toUpperCase()} source: previewing a cached H.264 copy${
+            preview.encoder ? ` (${preview.encoder})` : ""
+          }${preview.cached ? ", already built" : ", built now"}.`;
+        }
+      } catch (err) {
+        previewNote = ` Preview could not be prepared: ${String(err)}.`;
+      } finally {
+        unsubscribe();
+      }
+      setVideoUrl(playableUrl);
+
       let mediaLine = "";
       try {
         const info = await probeMedia(picked.path);
@@ -110,6 +138,7 @@ export default function App() {
       } catch (err) {
         mediaLine = `Video opened, but ffprobe failed: ${String(err)}`;
       }
+      mediaLine = `${mediaLine}${previewNote}`;
       // Waveform for the timeline (PRD 4.1); audio-less files just skip it.
       if (isTauri) {
         void waveformPeaks(picked.path, 1200)
@@ -601,6 +630,18 @@ export default function App() {
                   onPlay={() => setPlaying(true)}
                   onPause={() => setPlaying(false)}
                   onClick={togglePlay}
+                  onError={() => {
+                    const code = videoRef.current?.error?.code;
+                    const labels: Record<number, string> = {
+                      1: "loading was aborted",
+                      2: "network error while reading the file",
+                      3: "the decoder could not read the video stream",
+                      4: "this format is not supported by the embedded player",
+                    };
+                    setStatus(
+                      `Preview failed: ${labels[code ?? 0] ?? "unknown media error"}. The source itself may still export correctly.`,
+                    );
+                  }}
                 />
                 {overlayVisible && (
                   <div
@@ -619,18 +660,24 @@ export default function App() {
               </div>
             ) : (
               <div className="text-center text-slate-500">
-                <p className="mb-3">Open a video file to start clipping</p>
-                {isTauri ? (
-                  <button className="btn btn-primary" onClick={openVideo}>
-                    Open Video
-                  </button>
+                {sourcePath ? (
+                  <p className="mb-3">Preparing preview…</p>
                 ) : (
-                  <input
-                    type="file"
-                    accept="video/*"
-                    onChange={onFile}
-                    className="block text-sm text-slate-400 file:mr-3 file:rounded file:border-0 file:bg-blue-600 file:px-3 file:py-1.5 file:text-white"
-                  />
+                  <>
+                    <p className="mb-3">Open a video file to start clipping</p>
+                    {isTauri ? (
+                      <button className="btn btn-primary" onClick={openVideo}>
+                        Open Video
+                      </button>
+                    ) : (
+                      <input
+                        type="file"
+                        accept="video/*"
+                        onChange={onFile}
+                        className="block text-sm text-slate-400 file:mr-3 file:rounded file:border-0 file:bg-blue-600 file:px-3 file:py-1.5 file:text-white"
+                      />
+                    )}
+                  </>
                 )}
               </div>
             )}

@@ -8,6 +8,7 @@ pub mod clip;
 pub mod export;
 pub mod ffmpeg;
 pub mod naming;
+pub mod preview;
 pub mod probe;
 pub mod project;
 pub mod timecode;
