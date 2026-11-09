@@ -129,6 +129,22 @@ export async function onPreviewProgress(
   );
 }
 
+/** Renders a naming template for one clip (same code path as the exporter). */
+export async function previewFilename(params: {
+  pattern: string;
+  index: number;
+  clipName: string;
+  sourceName: string;
+  startSec: number;
+  endSec: number;
+}): Promise<string> {
+  if (!isTauri) {
+    throw new Error("preview_filename requires the Tauri runtime");
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string>("preview_filename", params);
+}
+
 /** Timeline waveform peaks in `0.0..=1.0`, one value per bucket. */
 export async function waveformPeaks(
   path: string,

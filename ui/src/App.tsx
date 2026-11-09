@@ -8,6 +8,7 @@ import {
   pickOutputFolder,
   onPreviewProgress,
   preparePreview,
+  previewFilename,
   probeMedia,
   saveProject,
   startExport,
@@ -89,6 +90,9 @@ export default function App() {
     localStorage.getItem(PREVIEW_QUALITY_KEY) === "high" ? "high" : "fast",
   );
   const qualityRef = useRef<PreviewQuality>(previewQuality);
+  const [namingPattern, setNamingPattern] = useState("{index}_{name}");
+  const [namePreview, setNamePreview] = useState("");
+  const [lastSaved, setLastSaved] = useState("");
 
   const fps = media && media.fps > 0 ? media.fps : FPS_FALLBACK;
 
@@ -165,6 +169,7 @@ export default function App() {
             : "smart_reencode",
       );
       setOutputDir(saved.export_settings.output_dir || "");
+      setNamingPattern(saved.export_settings.naming_pattern || "{index}_{name}");
       setDuration((d) => d || saved.source_video.duration_sec || 0);
       setStatus(`${mediaLine} Restored ${saved.clips.length} saved clip(s) from the project file.`);
     } catch {
@@ -374,7 +379,7 @@ export default function App() {
       },
       export_settings: {
         output_dir: outputDir,
-        naming_pattern: "{index}_{name}",
+        naming_pattern: namingPattern,
         mode: preset === "lossless_copy" ? "lossless_copy" : "smart_reencode",
         aspect_ratio_override: null,
         crop_style: preset === "blurred_background" ? "blurred_background" : "center_crop",
@@ -383,7 +388,7 @@ export default function App() {
       },
       clips,
     };
-  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, clips]);
+  }, [sourcePath, sourceName, duration, media, fps, outputDir, preset, namingPattern, clips]);
 
   const save = useCallback(() => {
     // The project file lives next to the source video (PRD 4.5), so the
@@ -395,6 +400,53 @@ export default function App() {
       .then(() => setStatus(`Project saved to ${target}.`))
       .catch((err: unknown) => setStatus(`Save failed: ${String(err)}`));
   }, [sourcePath, sourceName, buildProjectState]);
+
+  // PRD 4.5: every marker edit is written to the project file automatically.
+  // Debounced so typing a clip name does not write on each keystroke; the
+  // serialized state is compared first so no-op renders never touch the disk.
+  const lastSavedJson = useRef("");
+  useEffect(() => {
+    if (!isTauri || !sourcePath) {
+      return;
+    }
+    const state = buildProjectState();
+    const json = JSON.stringify(state);
+    if (json === lastSavedJson.current) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      void saveProject(projectPathFor(sourcePath), state)
+        .then(() => {
+          lastSavedJson.current = json;
+          const now = new Date();
+          setLastSaved(
+            `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+          );
+        })
+        .catch(() => {
+          /* autosave is best-effort; the status line stays for real errors */
+        });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [sourcePath, buildProjectState]);
+
+  // Filename preview uses the same Rust naming code as the export planner.
+  useEffect(() => {
+    if (!isTauri) {
+      return;
+    }
+    const clip = clips.find((c) => c.selected_for_export) ?? clips[0];
+    void previewFilename({
+      pattern: namingPattern || "{index}_{name}",
+      index: clip?.index ?? 1,
+      clipName: clip?.name || "Clip_01",
+      sourceName: sourceName || "source",
+      startSec: clip?.start_sec ?? 0,
+      endSec: clip?.end_sec ?? 10,
+    })
+      .then(setNamePreview)
+      .catch(() => setNamePreview(""));
+  }, [namingPattern, clips, sourceName]);
 
   const runExport = useCallback(async () => {
     if (!isTauri) {
@@ -606,6 +658,11 @@ export default function App() {
         <span className="min-w-0 flex-1 truncate text-sm text-slate-400">
           {sourceName ? `Project: ${sourceName}.rustcut` : "No project loaded"}
         </span>
+        {lastSaved && (
+          <span className="shrink-0 text-xs text-slate-500" title="Project file written automatically">
+            auto-saved {lastSaved}
+          </span>
+        )}
         <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
           {isTauri && (
             <>
@@ -859,6 +916,21 @@ export default function App() {
             )}
           </div>
           <div className="border-t border-slate-800 p-3">
+            <label htmlFor="naming" className="mb-1 block text-xs text-slate-400">
+              File name template
+            </label>
+            <input
+              id="naming"
+              value={namingPattern}
+              onChange={(e) => setNamingPattern(e.target.value)}
+              spellCheck={false}
+              placeholder="{index}_{name}"
+              title="Variables: {index} {name} {clip_name} {source_name} {start_time} {end_time} {duration}"
+              className="w-full rounded bg-slate-900 px-2 py-1 font-mono text-xs ring-slate-700 focus:outline-none focus:ring-1"
+            />
+            <div className="mb-2 mt-1 truncate font-mono text-[11px] text-slate-500" title={namePreview}>
+              {namePreview ? `→ ${namePreview}` : "→ 01_Clip_01.mp4"}
+            </div>
             <button
               onClick={() => void runExport()}
               disabled={!isTauri || exporting || selectedCount === 0}

@@ -14,6 +14,7 @@ use std::thread;
 
 use rustcut_core::clip::ExportStatus;
 use rustcut_core::export::{plan_export, summarize, ExportPlan, ExportResult, ProgressParser, SourceSpec};
+use rustcut_core::naming::{build_output_stem, NamingContext};
 use rustcut_core::probe::{parse_ffprobe_json, MediaInfo};
 use rustcut_core::project::ProjectState;
 use rustcut_core::VideoEncoder;
@@ -67,6 +68,28 @@ pub fn probe_media(path: String) -> Result<MediaInfo, String> {
         return Err(format!("ffprobe failed: {}", stderr.trim()));
     }
     parse_ffprobe_json(&String::from_utf8_lossy(&output.stdout)).map_err(|e| e.to_string())
+}
+
+/// Renders a naming template for one clip so the UI can show the exact
+/// filename before exporting (same code path as the export planner, so the
+/// preview can never drift from what is written).
+#[tauri::command]
+pub fn preview_filename(
+    pattern: String,
+    index: u32,
+    clip_name: String,
+    source_name: String,
+    start_sec: f64,
+    end_sec: f64,
+) -> String {
+    let ctx = NamingContext {
+        index,
+        clip_name: &clip_name,
+        source_name: &source_name,
+        start_sec,
+        end_sec,
+    };
+    format!("{}.mp4", build_output_stem(&pattern, &ctx))
 }
 
 /// Plans and launches a batch export on a background thread. Returns the

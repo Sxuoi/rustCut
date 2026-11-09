@@ -34,6 +34,7 @@ pub fn run() {
             load_project,
             save_project,
             exporter::probe_media,
+            exporter::preview_filename,
             exporter::start_export,
             exporter::waveform_peaks,
             previewer::prepare_preview
