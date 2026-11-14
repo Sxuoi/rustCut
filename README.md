@@ -10,6 +10,41 @@ Built from `docs/PRD.md` (v1.3). Architecture and contracts: `docs/ARCHITECTURE.
 Stack: Rust (edition 2024) · Tauri v2 · Svelte 5 + TypeScript + Tailwind v4 ·
 FFmpeg/FFprobe as sidecars.
 
+## Install (Windows 10/11 x64)
+
+In PowerShell:
+
+```powershell
+irm https://github.com/Sxuoi/rustcut/releases/latest/download/install.ps1 | iex
+```
+
+This installs RustCut for the current user, without administrator rights, in
+`%LOCALAPPDATA%\RustCut`, with its own FFmpeg and FFprobe and with Start menu and desktop
+shortcuts. The script checks the download against its published SHA-256 and checks that the
+bundled FFmpeg runs. Run the same line again to update.
+
+To pass options, run the script as a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/Sxuoi/rustcut/releases/latest/download/install.ps1))) -Uninstall
+```
+
+The options are:
+- `-Version 0.1.0`: install that release instead of the latest one.
+- `-InstallDir <folder>`: install somewhere other than `%LOCALAPPDATA%\RustCut`.
+- `-NoShortcuts`: skip the Start menu and desktop shortcuts.
+- `-Uninstall`: remove RustCut.
+
+You can also uninstall from Settings > Apps > Installed apps. Either way, settings and caches are
+kept in `%APPDATA%\app.rustcut.desktop` and `%LOCALAPPDATA%\app.rustcut.desktop`.
+
+The installer isn't code-signed yet. Running it through the one-liner is fine. If you download
+`RustCut-windows-x64-setup.exe` from the release page and open it, SmartScreen warns you first.
+
+The installer includes FFmpeg's `ffmpeg.exe` and `ffprobe.exe`, which are licensed under GPL
+version 3. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) has their license and where to get the
+source.
+
 ## Prerequisites
 
 * Rust stable (≥ 1.89) with the MSVC toolchain on Windows (Visual Studio C++ Build Tools)
@@ -40,6 +75,21 @@ cargo test            # engine crates (FFmpeg-based tests generate fixtures into
 npm test              # UI unit tests (vitest)
 npm run check         # svelte-check / TypeScript
 ```
+
+## Release (Windows)
+
+```bash
+npm run release:windows
+```
+
+This builds the per-user NSIS installer (`npx tauri build --bundles nsis`, sidecars included) and
+puts the three release files in `target/release-assets/`:
+- `RustCut-windows-x64-setup.exe`
+- `RustCut-windows-x64-setup.exe.sha256`
+- `install.ps1`
+
+Upload them to a release tagged `v<version>`. The one-line installer always fetches the latest
+release's files by these names.
 
 ## Automation (MCP)
 

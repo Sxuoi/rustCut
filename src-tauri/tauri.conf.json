@@ -42,6 +42,10 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
+    "resources": {
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "../licenses/FFmpeg-GPL-3.0.txt": "licenses/FFmpeg-GPL-3.0.txt"
+    },
     "category": "Video",
     "shortDescription": "Non-destructive batch video clipper",
     "longDescription": "Mark In/Out as often as you like, name each clip, and export every clip as its own file in one action: losslessly at disk speed, or frame-accurately and pre-framed for vertical platforms."
