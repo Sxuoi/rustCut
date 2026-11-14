@@ -1,0 +1,28 @@
+[package]
+name = "rustcut-export"
+description = "Batch export engine: pre-flight, scheduler, .part safe writes, progress, cancel, fault tolerance, export journal (EXP-01..14)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustcut-model.workspace = true
+rustcut-framing.workspace = true
+rustcut-naming.workspace = true
+rustcut-ffmpeg.workspace = true
+rustcut-runner.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+fs4.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rustcut-testkit.workspace = true
+rustcut-media.workspace = true

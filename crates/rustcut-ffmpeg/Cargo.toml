@@ -1,0 +1,18 @@
+[package]
+name = "rustcut-ffmpeg"
+description = "Pure FFmpeg layer: argument vectors (PRD 7.6 A-F), -progress parser, ffprobe JSON and packet parsers, container compatibility, size estimates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustcut-model.workspace = true
+rustcut-framing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

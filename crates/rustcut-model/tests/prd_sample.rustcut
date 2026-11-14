@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "app_version": "1.3.0",
+  "created_at": "2026-10-21T19:05:11Z",
+  "updated_at": "2026-10-21T21:47:03Z",
+  "source": {
+    "path": "D:/Recordings/livestream_2026_10_21.mp4",
+    "relative_path": "livestream_2026_10_21.mp4",
+    "fingerprint": { "size_bytes": 9123456789, "xxh3_head_tail": "9f2c41d07b3e88a1" },
+    "duration_sec": 9000.0,
+    "start_time_sec": 0.0,
+    "video": {
+      "codec": "h264",
+      "coded_width": 1920, "coded_height": 1080,
+      "display_width": 1920, "display_height": 1080,
+      "rotation": 0, "sar": "1:1",
+      "frame_rate": "60/1", "vfr": false, "hdr": false
+    },
+    "audio_tracks": [
+      { "stream_index": 1, "codec": "aac", "channels": 2, "title": "Mix" }
+    ]
+  },
+  "tags": [
+    { "id": "funny", "label": "Funny", "color": "#EF4444" },
+    { "id": "edu", "label": "Educational", "color": "#3B82F6" },
+    { "id": "highlight", "label": "Highlight", "color": "#22C55E" }
+  ],
+  "export_settings": {
+    "output_dir": "D:/Recordings/livestream_2026_10_21_clips",
+    "naming_template": "{index}_{name}",
+    "spaces_to_underscores": true,
+    "on_conflict": "rename",
+    "cut_mode": "lossless",
+    "framing": "original",
+    "output_resolution": "1080x1920",
+    "fps_cap": 60,
+    "audio_track": 1,
+    "encoder": "auto",
+    "parallel_jobs": 1
+  },
+  "next_index": 4,
+  "clips": [
+    {
+      "id": "0192b7e4-5c1a-7d3e-9f10-2a4b6c8d0e1f",
+      "index": 1,
+      "name": "Opening Moment",
+      "start_sec": 130.5,
+      "end_sec": 180.0,
+      "tag_id": "edu",
+      "crop_x_offset": -0.4,
+      "selected_for_export": true,
+      "export_status": "completed",
+      "last_export": {
+        "output_path": "D:/Recordings/livestream_2026_10_21_clips/01_Opening_Moment.mp4",
+        "exported_at": "2026-10-21T21:40:12Z",
+        "settings_hash": "c41f09aa",
+        "error": null
+      }
+    },
+    {
+      "id": "0192b7f9-0b2c-7a44-8e21-5d6f7a8b9c0d",
+      "index": 2,
+      "name": "Jump Scare Reaction",
+      "start_sec": 920.12,
+      "end_sec": 955.8,
+      "tag_id": "funny",
+      "crop_x_offset": 0.3,
+      "selected_for_export": true,
+      "export_status": "pending",
+      "last_export": null
+    },
+    {
+      "id": "0192b81c-3e4d-7f56-a0b1-c2d3e4f5a6b7",
+      "index": 3,
+      "name": "Patch Discussion",
+      "start_sec": 2520.0,
+      "end_sec": 2610.0,
+      "tag_id": null,
+      "crop_x_offset": 0.0,
+      "selected_for_export": false,
+      "export_status": "failed",
+      "last_export": {
+        "output_path": null,
+        "exported_at": "2026-10-21T21:40:15Z",
+        "settings_hash": "7be2d310",
+        "error": "ffmpeg exit 1: Invalid data found when processing input"
+      }
+    }
+  ],
+  "view_state": {
+    "playhead_sec": 924.12,
+    "zoom_window_sec": 20,
+    "selected_clip_id": "0192b7f9-0b2c-7a44-8e21-5d6f7a8b9c0d"
+  }
+}

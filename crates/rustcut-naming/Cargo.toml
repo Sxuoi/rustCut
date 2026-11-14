@@ -1,0 +1,22 @@
+[package]
+name = "rustcut-naming"
+description = "File naming (EXP-05 template, EXP-06 sanitization, EXP-07 collisions) and timestamp import/export (EXP-16/17)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustcut-model.workspace = true
+unicode-normalization.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+quick-xml = "0.37"
+serde_json.workspace = true

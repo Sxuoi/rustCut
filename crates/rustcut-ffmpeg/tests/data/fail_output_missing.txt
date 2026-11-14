@@ -1,0 +1,6 @@
+Input #0, lavfi, from 'testsrc2=d=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, yuv420p, 320x240 [SAR 1:1 DAR 4:3], 25 fps, 25 tbr, 25 tbn
+[out#0/mp4 @ 000001a624c6f3c0] Error opening output no_such_dir/out.mp4.part: No such file or directory
+Error opening output file no_such_dir/out.mp4.part.
+Error opening output files: No such file or directory

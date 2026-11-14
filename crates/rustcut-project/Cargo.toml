@@ -1,0 +1,32 @@
+[package]
+name = "rustcut-project"
+description = "ProjectStore (commands, undo/redo), atomic auto-save, backups, lock, schema migration, project location and recent projects (PRJ-01..07, MRK-04)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustcut-model.workspace = true
+serde.workspace = true
+# `float_roundtrip`: project files must reload bit-exactly (AC-05).
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+xxhash-rust.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+# Child process of the AC-04 kill test (`tests/kill.rs` runs it through
+# `env!("CARGO_BIN_EXE_rustcut-project-killtest")`). Not shipped with the app.
+[[bin]]
+name = "rustcut-project-killtest"
+path = "src/bin/killtest.rs"
+test = false
+doc = false

@@ -1,0 +1,50 @@
+[package]
+name = "rustcut"
+description = "RustCut desktop app: Tauri v2 shell wiring the engine crates to the WebView"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "rustcut_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `protocol-asset` is required by app.security.assetProtocol (Tier 1/2 playback).
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rustcut-model.workspace = true
+rustcut-framing.workspace = true
+rustcut-naming.workspace = true
+rustcut-ffmpeg.workspace = true
+rustcut-runner.workspace = true
+rustcut-project.workspace = true
+rustcut-media.workspace = true
+rustcut-export.workspace = true
+
+# WebView2 browser accelerator keys are switched off on Windows (PRD section 5, rule 3).
+# Same versions as the ones wry/tauri already compile.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
+[dev-dependencies]
+rustcut-testkit.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

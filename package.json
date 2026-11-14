@@ -1,0 +1,37 @@
+{
+  "name": "rustcut",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RustCut: non-destructive batch video clipper (Rust + Tauri v2 + FFmpeg)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "sidecars": "node scripts/setup-sidecars.mjs",
+    "sample": "node scripts/make-sample.mjs",
+    "bindings": "cargo test -p rustcut-model --lib && node scripts/bindings-index.mjs",
+    "e2e:build": "tauri build --debug --no-bundle",
+    "e2e": "node --test --test-concurrency=1 tests/e2e/editing.test.mjs tests/e2e/export.test.mjs tests/e2e/fixtures.test.mjs tests/e2e/keyboard.test.mjs tests/e2e/overlay.test.mjs",
+    "perf": "node scripts/perf.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/node": "^26.6.6",
+    "playwright-core": "^1.65.0",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.8",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "project_version": "1.0",
+  "app_version": "1.2.0",
+  "created_at": "2025-03-02T10:00:00Z",
+  "updated_at": "2025-03-02T11:30:00Z",
+  "source": {
+    "path": "D:/Recordings/stream_old.mp4",
+    "relative_path": "stream_old.mp4",
+    "fingerprint": { "size_bytes": 123456789, "xxh3_head_tail": "0123456789abcdef" },
+    "duration_sec": 3600.0,
+    "start_time_sec": 0.0,
+    "video": { "codec": "h264", "coded_width": 1920, "coded_height": 1080, "frame_rate": "30/1", "vfr": false, "hdr": false },
+    "audio_tracks": [ { "stream_index": 1, "codec": "aac", "channels": 2 } ]
+  },
+  "export_settings": {
+    "output_dir": null,
+    "naming_template": "{index}_{clip_name}",
+    "spaces_to_underscores": true,
+    "on_conflict": "rename",
+    "cut_mode": "accurate",
+    "framing": "vertical_crop",
+    "output_resolution": "1080x1920",
+    "fps_cap": 60,
+    "audio_track": 1,
+    "encoder": "auto",
+    "crop_x_offset": 0.25
+  },
+  "next_index": 5,
+  "clips": [
+    {
+      "id": "0192b7e4-5c1a-7d3e-9f10-2a4b6c8d0e1f",
+      "index": 1,
+      "name": "Funny bit",
+      "start_sec": 10.5,
+      "end_sec": 20.0,
+      "color": "red",
+      "crop_x_offset": -0.5,
+      "selected_for_export": true,
+      "export_status": "completed",
+      "last_export": {
+        "output_path": "D:/Recordings/stream_old_clips/01_Funny_bit.mp4",
+        "exported_at": "2025-03-02T11:00:00Z",
+        "settings_hash": "abcd1234",
+        "error": null
+      }
+    },
+    {
+      "id": "0192b7f9-0b2c-7a44-8e21-5d6f7a8b9c0d",
+      "index": 2,
+      "clip_name": "Lesson",
+      "start_sec": 100.0,
+      "end_sec": 160.25,
+      "color": "#3B82F6",
+      "selected_for_export": true,
+      "export_status": "pending",
+      "last_export": null
+    },
+    {
+      "id": "0192b81c-3e4d-7f56-a0b1-c2d3e4f5a6b7",
+      "index": 4,
+      "name": "Big play",
+      "start_sec": 300.0,
+      "end_sec": 330.0,
+      "color": "orange",
+      "selected_for_export": false,
+      "export_status": "exporting",
+      "last_export": null
+    },
+    {
+      "id": "0192b81c-3e4d-7f56-a0b1-c2d3e4f5a6b8",
+      "index": 3,
+      "name": "No colour",
+      "start_sec": 400.0,
+      "end_sec": 401.0,
+      "color": null,
+      "selected_for_export": true,
+      "export_status": "error",
+      "last_export": {
+        "output_path": null,
+        "exported_at": "2025-03-02T11:05:00Z",
+        "settings_hash": "ffff0000",
+        "error": "ffmpeg exit 1"
+      }
+    }
+  ],
+  "view_state": { "playhead_sec": 105.0, "zoom_window_sec": 20, "selected_clip_id": null }
+}

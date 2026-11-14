@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-renumber-clips"
+description = "Enables the renumber_clips command without any pre-configured scope."
+commands.allow = ["renumber_clips"]
+
+[[permission]]
+identifier = "deny-renumber-clips"
+description = "Denies the renumber_clips command without any pre-configured scope."
+commands.deny = ["renumber_clips"]

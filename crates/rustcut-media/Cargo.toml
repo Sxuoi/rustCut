@@ -1,0 +1,22 @@
+[package]
+name = "rustcut-media"
+description = "Media services: probe, media index (MP4 sample tables or packet scan), waveform, playback tiers (remux/proxy cache), hardware-encoder detection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustcut-model.workspace = true
+rustcut-ffmpeg.workspace = true
+rustcut-runner.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rustcut-testkit.workspace = true

@@ -1,0 +1,39 @@
+[package]
+name = "rustcut-mcp"
+description = "MCP server (stdio) that lets AI agents clip videos with RustCut's engine, headlessly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "rustcut_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustcut-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rustcut-model.workspace = true
+rustcut-naming.workspace = true
+rustcut-ffmpeg.workspace = true
+rustcut-runner.workspace = true
+rustcut-project.workspace = true
+rustcut-media.workspace = true
+rustcut-export.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+xxhash-rust.workspace = true
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile.workspace = true
+rustcut-testkit.workspace = true

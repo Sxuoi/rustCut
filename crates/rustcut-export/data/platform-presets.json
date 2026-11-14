@@ -1,0 +1,29 @@
+{
+  "note": "Platform limits change over time. Edit this file (or put a copy named platform-presets.json in RustCut's data folder) to update them without a new app version. framing is vertical_crop or vertical_blur; output_resolution is 1080x1920, 720x1280 or native; max_duration_sec and fps_cap may be null.",
+  "presets": [
+    {
+      "id": "youtube_shorts",
+      "label": "YouTube Shorts",
+      "framing": "vertical_crop",
+      "output_resolution": "1080x1920",
+      "max_duration_sec": 180,
+      "fps_cap": 60
+    },
+    {
+      "id": "tiktok",
+      "label": "TikTok",
+      "framing": "vertical_crop",
+      "output_resolution": "1080x1920",
+      "max_duration_sec": 600,
+      "fps_cap": 60
+    },
+    {
+      "id": "instagram_reels",
+      "label": "Instagram Reels",
+      "framing": "vertical_crop",
+      "output_resolution": "1080x1920",
+      "max_duration_sec": 180,
+      "fps_cap": 60
+    }
+  ]
+}

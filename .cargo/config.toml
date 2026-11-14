@@ -1,0 +1,4 @@
+[env]
+# ts-rs writes the TypeScript mirror of rustcut-model's IPC/schema types here
+# when `cargo test -p rustcut-model` runs (see docs/ARCHITECTURE.md §IPC).
+TS_RS_EXPORT_DIR = { value = "src/lib/bindings", relative = true }

@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens (dark theme by default, PRD §6). Contrast of every text token
+ * against --color-bg / --color-panel is >= 4.5:1 (§8.5).
+ * Tailwind v4 turns these into utilities: bg-panel, text-muted, border-line, …
+ */
+@theme {
+  --color-bg: #0d1014;
+  --color-panel: #141a21;
+  --color-panel-2: #1a222c;
+  --color-panel-3: #222c38;
+  --color-line: #2c3745;
+  --color-text: #e6edf3;
+  --color-muted: #9aa8b6;
+  --color-accent: #5aa4ff;
+  --color-accent-strong: #1f6fd8; /* white text: 4.86:1 */
+  --color-accent-hover: #1a5fc0; /* white text: >= 5.5:1 */
+
+  --color-danger: #f87171;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-pending-in: #fbbf24;
+  --color-pending-out: #fb923c;
+  --color-playhead: #f8fafc;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#app {
+  height: 100%;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+/* Visible focus ring on every keyboard-reachable control (§8.5). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* Honour the OS reduced-motion setting, and the in-app override (§8.5). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+:root[data-reduced-motion="true"] *,
+:root[data-reduced-motion="true"] *::before,
+:root[data-reduced-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

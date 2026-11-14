@@ -1,0 +1,16 @@
+Input #0, lavfi, from 'testsrc2=size=256x256:rate=30:duration=1':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: wrapped_avframe, yuv420p, 256x256 [SAR 1:1 DAR 1:1], 30 fps, 30 tbr, 30 tbn
+Stream mapping:
+  Stream #0:0 -> #0:0 (wrapped_avframe (native) -> h264 (h264_amf))
+[h264_amf @ 000001ac63ff9000] encoder->Init() failed with error 4
+[vost#0:0/h264_amf @ 000001ac63ff8a00] [enc:h264_amf @ 000001ac63f7ad80] Error while opening encoder - maybe incorrect parameters such as bit_rate, rate, width or height.
+[vf#0:0 @ 000001ac63ff91c0] Error sending frames to consumers: Internal bug, should not have happened
+[vf#0:0 @ 000001ac63ff91c0] Task finished with error code: -558323010 (Internal bug, should not have happened)
+[vf#0:0 @ 000001ac63ff91c0] Terminating thread with return code -558323010 (Internal bug, should not have happened)
+[vost#0:0/h264_amf @ 000001ac63ff8a00] [enc:h264_amf @ 000001ac63f7ad80] Could not open encoder before EOF
+[vost#0:0/h264_amf @ 000001ac63ff8a00] Task finished with error code: -22 (Invalid argument)
+[vost#0:0/h264_amf @ 000001ac63ff8a00] Terminating thread with return code -22 (Invalid argument)
+[out#0/null @ 000001ac63f413c0] Nothing was written into output file, because at least one of its streams received no packets.
+frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A elapsed=0:00:00.18    
+Conversion failed!

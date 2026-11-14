@@ -1,0 +1,71 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rustcut-model",
+    "crates/rustcut-framing",
+    "crates/rustcut-naming",
+    "crates/rustcut-ffmpeg",
+    "crates/rustcut-runner",
+    "crates/rustcut-project",
+    "crates/rustcut-media",
+    "crates/rustcut-export",
+    "crates/rustcut-testkit",
+    "crates/rustcut-mcp",
+    "src-tauri",
+]
+# `cargo test` at the root runs the engine crates only; the Tauri shell is built
+# with `npm run tauri dev|build` or `cargo build -p rustcut`.
+default-members = [
+    "crates/rustcut-model",
+    "crates/rustcut-framing",
+    "crates/rustcut-naming",
+    "crates/rustcut-ffmpeg",
+    "crates/rustcut-runner",
+    "crates/rustcut-project",
+    "crates/rustcut-media",
+    "crates/rustcut-export",
+    "crates/rustcut-testkit",
+    "crates/rustcut-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[workspace.dependencies]
+# internal
+rustcut-model = { path = "crates/rustcut-model" }
+rustcut-framing = { path = "crates/rustcut-framing" }
+rustcut-naming = { path = "crates/rustcut-naming" }
+rustcut-ffmpeg = { path = "crates/rustcut-ffmpeg" }
+rustcut-runner = { path = "crates/rustcut-runner" }
+rustcut-project = { path = "crates/rustcut-project" }
+rustcut-media = { path = "crates/rustcut-media" }
+rustcut-export = { path = "crates/rustcut-export" }
+rustcut-testkit = { path = "crates/rustcut-testkit" }
+
+# external (PRD §7.4)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v7", "serde"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+fs4 = { version = "0.13", features = ["sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "fs", "io-util"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+unicode-normalization = "0.1"
+ts-rs = { version = "11", features = ["uuid-impl", "chrono-impl"] }
+
+# dev
+proptest = "1"
+tempfile = "3"
+
+[profile.dev.package."*"]
+# Dependencies build optimised so tests that parse large inputs stay fast.
+opt-level = 2

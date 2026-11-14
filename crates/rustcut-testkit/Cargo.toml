@@ -1,0 +1,12 @@
+[package]
+name = "rustcut-testkit"
+description = "Test support: locate ffmpeg/ffprobe and generate the synthetic golden-set fixtures (PRD 11) on demand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true

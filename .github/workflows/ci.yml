@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Engine (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+      - name: Verify media tools
+        shell: pwsh
+        run: |
+          ffmpeg -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ffprobe -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Engine tests and AC-11 sanitisation vectors
+        shell: pwsh
+        run: |
+          $env:RUSTCUT_FFMPEG_DIR = Split-Path (Get-Command ffmpeg).Source
+          $env:FFMPEG_DIR = $env:RUSTCUT_FFMPEG_DIR
+          $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP 'rustcut-engine'; cargo test --locked -p rustcut-model -p rustcut-framing -p rustcut-naming -p rustcut-ffmpeg -p rustcut-project -p rustcut-export
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npx vitest run
+      - name: Check desktop measurement and regression syntax (no app launch)
+        run: |
+          node --check tests/e2e/harness.mjs
+          node --check tests/e2e/keyboard.test.mjs
+          node --check tests/e2e/overlay.test.mjs
+          node --check scripts/perf.mjs

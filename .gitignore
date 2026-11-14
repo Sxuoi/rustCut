@@ -1,0 +1,28 @@
+# Rust
+/target
+/target-*
+/src-tauri/target
+/src-tauri/gen/schemas
+
+# FFmpeg sidecars are copied in by `npm run sidecars` (large binaries, GPL builds)
+/src-tauri/binaries/*
+!/src-tauri/binaries/README.md
+
+# Node / Vite
+/node_modules
+/dist
+/public/sample/*
+!/public/sample/README.md
+
+# Generated test media and outputs
+/.fixtures
+/test-output
+*.part
+*.log
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea

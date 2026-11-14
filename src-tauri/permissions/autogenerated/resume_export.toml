@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resume-export"
+description = "Enables the resume_export command without any pre-configured scope."
+commands.allow = ["resume_export"]
+
+[[permission]]
+identifier = "deny-resume-export"
+description = "Denies the resume_export command without any pre-configured scope."
+commands.deny = ["resume_export"]
