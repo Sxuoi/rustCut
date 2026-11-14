@@ -39,6 +39,7 @@
     "allow-request-playback",
     "allow-start-waveform",
     "allow-get-media-index",
+    "allow-start-media-index",
     "allow-reveal-path",
     "allow-open-output-folder",
     "allow-clear-cache",

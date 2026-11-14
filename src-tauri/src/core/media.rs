@@ -24,15 +24,45 @@ fn toast(level: NoticeLevel, code: &str, message: impl Into<String>) -> AppEvent
     }
 }
 
+/// How much of the index build [`AppCore::spawn_index`] may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexBuild {
+    /// The cache or the MP4/MOV sample tables only (at most the `moov` box), safe to run while
+    /// the first frame loads.
+    Quick,
+    /// Also the FFprobe packet scan, which reads the whole file (AC-14: after the first frame).
+    Full,
+}
+
 impl AppCore {
-    /// Start the background jobs of a session whose source is present.
+    /// Start the background jobs of a session whose source is present. The index starts with
+    /// [`IndexBuild::Quick`]; a file that needs a packet scan waits for `start_media_index`.
     pub(crate) fn start_jobs(&self, session: &Arc<Session>) {
-        self.spawn_index(session);
+        self.spawn_index(session, IndexBuild::Quick);
         self.spawn_growth_watch(session);
     }
 
+    /// `start_media_index`: build the index with a packet scan if the open could not build it
+    /// quickly (no sample tables, e.g. Matroska). The UI calls it once the first frame is on
+    /// screen, so the scan does not read the file before it (AC-14). Does nothing while the
+    /// index exists or a full build runs.
+    ///
+    /// # Errors
+    /// No project, or [`ErrorCode::SourceMissing`].
+    pub fn start_media_index(&self) -> Result<(), CommandError> {
+        let session = self.session()?;
+        Self::require_source(&session)?;
+        // One lock at a time (the guards of a single condition would overlap).
+        let built = lk(&session.index).is_some();
+        let full_build_running = lk(&session.jobs).index_full;
+        if !built && !full_build_running {
+            self.spawn_index(&session, IndexBuild::Full);
+        }
+        Ok(())
+    }
+
     /// PLY-06: build the keyframe/frame index and announce it with `AppEvent::MediaIndex`.
-    fn spawn_index(&self, session: &Arc<Session>) {
+    fn spawn_index(&self, session: &Arc<Session>, build: IndexBuild) {
         let Some(media) = self.inner.media.clone() else {
             return;
         };
@@ -43,14 +73,19 @@ impl AppCore {
             let mut jobs = lk(&session.jobs);
             jobs.index.cancel();
             jobs.index = cancel.clone();
+            jobs.index_full = build == IndexBuild::Full;
         }
         let (session, sink) = (session.clone(), self.inner.sink.clone());
         tokio::spawn(async move {
-            match media
-                .build_index_cancellable(&path, &source, |_| {}, cancel.clone())
-                .await
-            {
-                Ok(built) => {
+            let result = match build {
+                IndexBuild::Quick => Ok(media.quick_index(&path, &source).await),
+                IndexBuild::Full => media
+                    .build_index_cancellable(&path, &source, |_| {}, cancel.clone())
+                    .await
+                    .map(Some),
+            };
+            match result {
+                Ok(Some(built)) => {
                     if cancel.is_cancelled() {
                         return;
                     }
@@ -61,6 +96,8 @@ impl AppCore {
                     });
                     sink.send(AppEvent::MediaIndex { info });
                 }
+                // Only the packet scan can index this file; `start_media_index` runs it.
+                Ok(None) => {}
                 Err(MediaError::Cancelled) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, "frame index failed");

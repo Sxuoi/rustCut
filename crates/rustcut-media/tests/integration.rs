@@ -414,6 +414,41 @@ async fn ply06_sample_table_index_equals_the_packet_scan() {
     }
 }
 
+/// AC-14: `quick_index` never scans packets. It answers from the sample tables or the cache and
+/// leaves a container without sample tables to the packet scan of `build_index_cancellable`.
+#[tokio::test(flavor = "multi_thread")]
+async fn ply06_quick_index_uses_sample_tables_or_cache_but_never_scans() {
+    let Some(env) = env() else { return };
+    let mp4 = fixture(Fixture::Baseline1080p60);
+    let mp4_source = probe(&env, Fixture::Baseline1080p60).await.source;
+    let quick = env
+        .svc
+        .quick_index(&mp4, &mp4_source)
+        .await
+        .expect("MP4 sample tables");
+    assert_eq!(quick.source, IndexSource::SampleTable);
+
+    let mkv = fixture(Fixture::ObsMkv4Audio);
+    let mkv_source = probe(&env, Fixture::ObsMkv4Audio).await.source;
+    assert!(
+        env.svc.quick_index(&mkv, &mkv_source).await.is_none(),
+        "Matroska needs the packet scan"
+    );
+    let scanned = env
+        .svc
+        .build_index_cancellable(&mkv, &mkv_source, |_| {}, CancelToken::new())
+        .await
+        .unwrap();
+    assert_eq!(scanned.source, IndexSource::PacketScan);
+    let cached = env
+        .svc
+        .quick_index(&mkv, &mkv_source)
+        .await
+        .expect("cached scan");
+    assert_eq!(cached.source, IndexSource::Cache);
+    assert_eq!(cached.index, scanned.index);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ply06_index_matches_fixture_truth_and_is_cached() {
     let Some(env) = env() else { return };

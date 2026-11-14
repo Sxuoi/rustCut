@@ -54,16 +54,36 @@ export async function saveSettings(next: AppSettings): Promise<AppSettings> {
   }
 }
 
-/** Start the background media jobs of an available source (PLY-05/06). */
+/**
+ * Longest wait for the first presented frame before the jobs that read the whole file start
+ * anyway, so the first waveform view still arrives within PRD 8.1's 5 s when no frame is shown.
+ */
+export const MEDIA_JOBS_START_TIMEOUT_MS = 3000;
+
+/**
+ * Start the background media jobs of an available source (PLY-05/06). The media index is
+ * requested at once: the open builds it from the MP4/MOV sample tables, and Player.svelte reads
+ * its first keyframe for the time origin (§7.3) when the first frame arrives. The jobs that read
+ * the whole file (the waveform, and the packet-scan index of other containers) wait for that
+ * first frame (AC-14: < 50 MB read before it) or `MEDIA_JOBS_START_TIMEOUT_MS`, whichever
+ * comes first.
+ */
 function startMediaJobs(s: ProjectSnapshot): void {
   const tracks = s.project.source.audio_tracks.length;
-  if (tracks > 0) {
-    const wanted = s.project.export_settings.audio_track;
-    const track = wanted >= 1 && wanted <= tracks ? wanted : 1;
+  const wanted = s.project.export_settings.audio_track;
+  const track = wanted >= 1 && wanted <= tracks ? wanted : 1;
+  const generation = player.generation;
+  void player.firstFrame(MEDIA_JOBS_START_TIMEOUT_MS).then(() => {
+    // Another project was opened, or this one closed, before its first frame.
+    if (player.generation !== generation) return;
+    backend.startMediaIndex().catch(() => {
+      // Only fails without an open source; a failed scan arrives as an `index_failed` toast.
+    });
+    if (tracks === 0) return;
     backend.startWaveform(track).catch((e: unknown) => {
       ui.toast({ level: "warning", message: t("session.waveformFailed", { reason: BackendError.from(e).message }) });
     });
-  }
+  });
   backend
     .getMediaIndex()
     .then((info) => {

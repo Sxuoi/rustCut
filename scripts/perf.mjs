@@ -1,7 +1,7 @@
 // PRD 8.1 / AC-14. Opt-in desktop measurements; never imported by the test runner.
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdirSync, readdirSync, statSync, renameSync, writeFileSync,
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, renameSync, writeFileSync,
   openSync, readSync, writeSync, closeSync, ftruncateSync, createReadStream, createWriteStream, linkSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
@@ -89,7 +89,8 @@ async function main() {
   const rows = [
     ["cold_start_ms", "Cold start to interactive", "≤1500 ms", 1500],
     ["open_ms", "3 h / 20 GB MP4 to first frame", "≤2000 ms", 2000],
-    ["open_read_bytes", "AC-14 process-tree read transfer", "<50 MB", 50_000_000],
+    ["open_read_bytes", "AC-14 reads before first frame (rustcut.exe + FFmpeg)", "<50 MB", 50_000_000],
+    ["open_tree_read_bytes", "AC-14 process-tree reads at first frame (incl. WebView2)", "INFO", null],
     ["seek_p50_ms", "Seek p50", "INFO", null],
     ["seek_p95_ms", "Seek p95", "≤300 ms", 300],
     ["step_forward_ms", "Frame step forward p95", "≤100 ms", 100],
@@ -147,6 +148,53 @@ async function main() {
     if (!list.some((p) => p.ProcessId === app.pid)) throw new Error("Measured RustCut PID disappeared");
     return list.map((p) => ({ pid: p.ProcessId, parent: p.ParentProcessId, name: p.Name,
       reads: Number(p.ReadTransferCount), private: Number(p.PrivatePageCount) }));
+  }
+  /**
+   * AC-14 sampler: the measured tree's ReadTransferCount about every 30 ms (Toolhelp snapshot and
+   * GetProcessIoCounters in a helper PowerShell process; no WMI load during the open). Stops by
+   * `stop()`, when the measured app exits, or after two minutes. Sample times are epoch ms, like
+   * `performance.timeOrigin + performance.now()` in the page.
+   */
+  async function startReadSampler(root) {
+    const output = join(ws.media, "read-samples.jsonl");
+    const stopFile = join(ws.media, "read-samples.stop");
+    const quoted = (path) => `'${path.replaceAll("'", "''")}'`;
+    const script = `$ErrorActionPreference = 'Stop'\nAdd-Type -TypeDefinition @'\n${readSamplerSource()}\n'@\n` +
+      `[PerfReadSampler]::Run(${root}, ${quoted(output)}, ${quoted(stopFile)})`;
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (data) => { stderr = (stderr + data).slice(-4000); });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    await waitFor(() => {
+      if (child.exitCode !== null) throw new Error(`Read sampler exited ${child.exitCode}: ${stderr}`);
+      return existsSync(output) && readFileSync(output, "utf8").includes("\n");
+    }, { timeout: 30000, every: 50, what: "the read sampler's first sample" });
+    return {
+      async stop() {
+        writeFileSync(stopFile, "");
+        await Promise.race([exited, sleep(5000)]);
+        if (child.exitCode === null) child.kill(); // only the sampler started here
+        return readFileSync(output, "utf8").split(/\r?\n/).flatMap((line) => {
+          try { return line ? [JSON.parse(line)] : []; } catch { return []; } // a line cut by kill()
+        });
+      },
+    };
+  }
+  /**
+   * Reads per process from just after `baseline` up to `sample`: each process's last value in that
+   * span minus its value at `baseline`. Processes created after `frameAt` read nothing before the
+   * first frame and are left out. Only rustcut.exe and its FFmpeg children open the media file;
+   * WebView2 processes receive its bytes from rustcut.exe over IPC, so they count only in `tree`.
+   */
+  function readsUpTo(samples, baseline, sample, frameAt) {
+    const before = new Map(baseline.p.map((p) => [p.pid, p.reads]));
+    const last = new Map();
+    for (const s of samples) if (s.t0 > baseline.t0 && s.t0 <= sample.t0) for (const p of s.p) last.set(p.pid, p);
+    const byProcess = [...last.values()].filter((p) => p.created <= frameAt)
+      .map((p) => ({ pid: p.pid, name: p.name, bytes: Math.max(0, p.reads - (before.get(p.pid) ?? 0)) }));
+    const media = byProcess.filter((p) => /^(rustcut|ffmpeg|ffprobe)\.exe$/i.test(p.name));
+    return { app: media.reduce((n, p) => n + p.bytes, 0), tree: byProcess.reduce((n, p) => n + p.bytes, 0), byProcess };
   }
   async function observeEvents() {
     await app.page.evaluate(() => {
@@ -245,17 +293,36 @@ async function main() {
     record("cold_start_ms", performance.now() - spawnedAt, "Spawn to playable editor, includes CDP attach/poll overhead; fresh app/WebView profile; OS cache not flushed.");
     await observeEvents();
 
-    await stage(["open_ms", "open_read_bytes", "large_tree_private_bytes", "large_core_private_bytes"], async () => {
+    await stage(["open_ms", "open_read_bytes", "open_tree_read_bytes", "large_tree_private_bytes", "large_core_private_bytes"], async () => {
       await app.invoke("close_project");
       const before = await counters();
-      const ms = await openMeasured(padded);
+      const sampler = await startReadSampler(app.pid);
+      let ms, samples;
+      try {
+        ms = await openMeasured(padded);
+        await sleep(200); // samples after the first frame bound its reads from above
+      } finally {
+        samples = await sampler.stop();
+      }
       const after = await counters();
-      const old = new Map(before.map((p) => [p.pid, p.reads]));
-      // New children contribute their lifetime reads. CIM is a conservative endpoint after first presentation.
-      const bytes = after.reduce((n, p) => n + Math.max(0, p.reads - (old.get(p.pid) ?? 0)), 0);
-      report.readCounters = { before, after, endpoint: "first CIM snapshot after first presented frame" };
+      const { handoffAt, frameAt } = await app.page.evaluate(() => ({
+        handoffAt: performance.timeOrigin + window.__perfOpen.start,
+        frameAt: performance.timeOrigin + window.__perfOpen.frame,
+      }));
+      const baseline = samples.filter((s) => s.t1 <= handoffAt).at(-1);
+      const lower = samples.filter((s) => s.t1 <= frameAt).at(-1);
+      const upper = samples.find((s) => s.t0 >= frameAt);
+      if (!baseline || !lower || !upper) throw new Error(`Read samples do not bracket the hand-off and the first frame (${samples.length} samples)`);
+      const atFrame = readsUpTo(samples, baseline, upper, frameAt);
+      const beforeFrame = readsUpTo(samples, baseline, lower, frameAt);
+      const gaps = samples.slice(1).map((s, i) => s.t0 - samples[i].t0);
+      report.readCounters = { before, after, endpoint: "CIM snapshots before the hand-off and after waitReady; context only" };
+      report.firstFrameReads = { handoffAt, frameAt, sampleCount: samples.length, medianIntervalMs: percentile(gaps, 0.5),
+        baseline, lower, upper, upperByProcess: atFrame.byProcess, lowerByProcess: beforeFrame.byProcess };
+      const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
       record("open_ms", ms);
-      record("open_read_bytes", bytes, "ReadTransferCount upper-bound delta; includes non-media I/O and CIM endpoint overhead. Exited-between-snapshots children are not observable.");
+      record("open_read_bytes", atFrame.app, `Upper bound at the first sample ${(upper.t0 - frameAt).toFixed(0)} ms after the first frame; ${mb(beforeFrame.app)} at the last sample ${(frameAt - lower.t1).toFixed(0)} ms before it. ReadTransferCount of rustcut.exe and its FFmpeg children (all reads, not only the media file); processes started after the first frame are excluded; children that exited earlier report their final count.`);
+      record("open_tree_read_bytes", atFrame.tree, "Same sample including the WebView2 processes, which receive the file's bytes from rustcut.exe over IPC (a double count).");
       await key("k");
       const memory = [];
       for (let i = 0; i < 5; i++) { await sleep(1000); memory.push(await counters()); }
@@ -414,6 +481,136 @@ async function main() {
     console.log("\n" + markdown);
     if (rows.some((row) => row.status === "FAIL")) process.exitCode = 1;
   }
+}
+
+/**
+ * C# for the AC-14 read sampler (Windows PowerShell 5.1 compiles it with Add-Type, so C# 5): one
+ * JSON line per sample, `{"t0","t1","p":[{pid,parent,name,reads,created}]}`, times in epoch ms.
+ */
+function readSamplerSource() {
+  return String.raw`using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
+public static class PerfReadSampler {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct ProcessEntry {
+    public uint Size, Usage, ProcessId;
+    public IntPtr DefaultHeapId;
+    public uint ModuleId, Threads, ParentProcessId;
+    public int PriorityClassBase;
+    public uint Flags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string ExeFile;
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  struct IoCounters { public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes; }
+
+  [DllImport("kernel32.dll")] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32FirstW(IntPtr snapshot, ref ProcessEntry entry);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32NextW(IntPtr snapshot, ref ProcessEntry entry);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+  [DllImport("kernel32.dll")] static extern bool GetProcessIoCounters(IntPtr process, out IoCounters counters);
+  [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern void GetSystemTimePreciseAsFileTime(out long fileTime);
+
+  const long UnixEpochFileTime = 116444736000000000L;
+
+  // Every process of the tree seen so far. The handles stay open until the end: an exited
+  // child's final counters stay readable and its PID cannot be reused meanwhile.
+  static readonly Dictionary<uint, IntPtr> Handles = new Dictionary<uint, IntPtr>();
+  static readonly Dictionary<uint, uint> Parents = new Dictionary<uint, uint>();
+  static readonly Dictionary<uint, string> Names = new Dictionary<uint, string>();
+  static readonly Dictionary<uint, long> Created = new Dictionary<uint, long>();
+  static readonly HashSet<uint> Unrelated = new HashSet<uint>();
+
+  static double Now() {
+    long fileTime;
+    GetSystemTimePreciseAsFileTime(out fileTime);
+    return (fileTime - UnixEpochFileTime) / 10000.0;
+  }
+
+  public static void Run(uint root, string output, string stop) {
+    double end = Now() + 120000;
+    try {
+      using (var writer = new StreamWriter(output, false, new UTF8Encoding(false))) {
+        while (!File.Exists(stop) && Now() < end) {
+          string line = Sample(root);
+          if (line == null) break; // the measured app has exited
+          writer.WriteLine(line);
+          writer.Flush();
+          Thread.Sleep(10);
+        }
+      }
+    } finally {
+      foreach (IntPtr handle in Handles.Values) if (handle != IntPtr.Zero) CloseHandle(handle);
+    }
+  }
+
+  static bool Track(uint id, uint parent, string name) {
+    IntPtr handle = OpenProcess(0x1000, false, id); // PROCESS_QUERY_LIMITED_INFORMATION
+    long created = 0, exited = 0, kernel = 0, user = 0;
+    if (handle != IntPtr.Zero) GetProcessTimes(handle, out created, out exited, out kernel, out user);
+    long parentCreated;
+    if (Created.TryGetValue(parent, out parentCreated) && created != 0 && created < parentCreated) {
+      // Older than the tracked process with its parent's PID: that PID was reused, not a child.
+      if (handle != IntPtr.Zero) CloseHandle(handle);
+      Unrelated.Add(id);
+      return false;
+    }
+    Handles[id] = handle;
+    Parents[id] = parent;
+    Names[id] = name;
+    Created[id] = created;
+    return true;
+  }
+
+  static string Sample(uint root) {
+    double t0 = Now();
+    var alive = new Dictionary<uint, ProcessEntry>();
+    IntPtr snapshot = CreateToolhelp32Snapshot(2, 0); // TH32CS_SNAPPROCESS
+    var entry = new ProcessEntry();
+    entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry));
+    for (bool more = Process32FirstW(snapshot, ref entry); more; more = Process32NextW(snapshot, ref entry)) {
+      alive[entry.ProcessId] = entry;
+    }
+    CloseHandle(snapshot);
+    if (!alive.ContainsKey(root)) return null;
+    if (!Handles.ContainsKey(root)) Track(root, alive[root].ParentProcessId, alive[root].ExeFile);
+    for (bool added = true; added;) {
+      added = false;
+      foreach (var pair in alive) {
+        if (pair.Key != 0 && !Handles.ContainsKey(pair.Key) && !Unrelated.Contains(pair.Key) &&
+            Handles.ContainsKey(pair.Value.ParentProcessId)) {
+          added |= Track(pair.Key, pair.Value.ParentProcessId, pair.Value.ExeFile);
+        }
+      }
+    }
+    var items = new List<string>();
+    foreach (var tracked in Handles) {
+      uint id = tracked.Key;
+      var io = new IoCounters();
+      if (tracked.Value == IntPtr.Zero || !GetProcessIoCounters(tracked.Value, out io)) continue;
+      long created = Created[id];
+      // Concatenation, not String.Format: "{4:F3}}}" would read "}}" as part of the format.
+      items.Add("{\"pid\":" + id.ToString(CultureInfo.InvariantCulture) +
+        ",\"parent\":" + Parents[id].ToString(CultureInfo.InvariantCulture) +
+        ",\"name\":\"" + Names[id].Replace("\\", "\\\\").Replace("\"", "\\\"") +
+        "\",\"reads\":" + io.ReadBytes.ToString(CultureInfo.InvariantCulture) +
+        ",\"created\":" + Ms((created - UnixEpochFileTime) / 10000.0) + "}");
+    }
+    return "{\"t0\":" + Ms(t0) + ",\"t1\":" + Ms(Now()) + ",\"p\":[" + String.Join(",", items) + "]}";
+  }
+
+  static string Ms(double value) {
+    return value.ToString("F3", CultureInfo.InvariantCulture);
+  }
+}`;
 }
 
 /** Insert a sparse top-level free atom BEFORE the trailing moov; media offsets stay valid. */

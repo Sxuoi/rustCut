@@ -549,6 +549,10 @@ export class MockBackend implements Backend {
     return playbackInfo(s.project.source, tier);
   }
 
+  async startMediaIndex(): Promise<void> {
+    this.requireStore(); // the mock's index is complete at once (getMediaIndex)
+  }
+
   async startWaveform(track: number): Promise<void> {
     const s = this.requireStore();
     const count = s.project.source.audio_tracks.length;

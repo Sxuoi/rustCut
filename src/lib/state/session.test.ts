@@ -6,7 +6,7 @@ import { dispatchEvent } from "./events";
 import { exporter } from "./exporter.svelte";
 import { player } from "./player.svelte";
 import { project } from "./project.svelte";
-import { applyOpenResult, openPath } from "./session";
+import { applyOpenResult, MEDIA_JOBS_START_TIMEOUT_MS, openPath } from "./session";
 import { ui } from "./ui.svelte";
 
 beforeEach(() => {
@@ -14,6 +14,7 @@ beforeEach(() => {
   project.clear();
   vi.spyOn(backend, "startWaveform").mockResolvedValue();
   vi.spyOn(backend, "getMediaIndex").mockResolvedValue(null);
+  vi.spyOn(backend, "startMediaIndex").mockResolvedValue();
 });
 
 async function previousProject() {
@@ -28,6 +29,7 @@ async function previousProject() {
 }
 
 afterEach(() => {
+  player.reset(); // settles a waveform start still waiting for a first frame
   vi.restoreAllMocks();
   exporter.phase = "idle";
   ui.phase = "empty";
@@ -156,6 +158,67 @@ describe("openPath", () => {
     expect(project.readOnly?.kind).toBe("source_missing");
     expect(player.playback).toBeNull();
     expect(playback).not.toHaveBeenCalled();
+  });
+});
+
+describe("background media jobs after an open (AC-14)", () => {
+  async function opened() {
+    const result = await backend.openPath("/media/first-frame.mp4");
+    expect(result.playback).not.toBeNull();
+    expect(result.snapshot.project.source.audio_tracks.length).toBeGreaterThan(0);
+    return result;
+  }
+
+  it("requests the media index at once but starts the whole-file jobs at the first frame", async () => {
+    applyOpenResult(await opened());
+    expect(backend.getMediaIndex).toHaveBeenCalledOnce(); // Player.svelte needs keyframes for the first frame
+    await Promise.resolve();
+    expect(backend.startWaveform).not.toHaveBeenCalled();
+    expect(backend.startMediaIndex).not.toHaveBeenCalled();
+    player.ready = true; // Player.svelte: first frame presented
+    await vi.waitFor(() => expect(backend.startWaveform).toHaveBeenCalledWith(1));
+    expect(backend.startWaveform).toHaveBeenCalledOnce();
+    expect(backend.startMediaIndex).toHaveBeenCalledOnce();
+  });
+
+  it("starts the packet-scan index but no waveform for a video without audio", async () => {
+    const result = await opened();
+    result.snapshot.project.source.audio_tracks = [];
+    applyOpenResult(result);
+    player.ready = true;
+    await vi.waitFor(() => expect(backend.startMediaIndex).toHaveBeenCalledOnce());
+    expect(backend.startWaveform).not.toHaveBeenCalled();
+  });
+
+  it("starts the whole-file jobs after MEDIA_JOBS_START_TIMEOUT_MS when no frame is presented", async () => {
+    const result = await opened();
+    vi.useFakeTimers();
+    try {
+      applyOpenResult(result);
+      await vi.advanceTimersByTimeAsync(MEDIA_JOBS_START_TIMEOUT_MS - 1);
+      expect(backend.startWaveform).not.toHaveBeenCalled();
+      expect(backend.startMediaIndex).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(backend.startWaveform).toHaveBeenCalledOnce();
+      expect(backend.startMediaIndex).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never starts the whole-file jobs of a project closed or replaced before its first frame", async () => {
+    const result = await opened();
+    vi.useFakeTimers();
+    try {
+      applyOpenResult(result);
+      player.reset(); // closeProject(), or loadIntoStores() for the next file
+      player.ready = true;
+      await vi.advanceTimersByTimeAsync(MEDIA_JOBS_START_TIMEOUT_MS);
+      expect(backend.startWaveform).not.toHaveBeenCalled();
+      expect(backend.startMediaIndex).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

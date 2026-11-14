@@ -31,6 +31,36 @@ describe("stepFrame after a finished seek, before the frame is presented", () =>
   });
 });
 
+describe("firstFrame (AC-14: background jobs wait for the first frame)", () => {
+  it("resolves true when the first frame is presented, at once if it already is", async () => {
+    const p = new PlayerState();
+    const waiting = p.firstFrame(10_000);
+    p.ready = true;
+    await expect(waiting).resolves.toBe(true);
+    await expect(p.firstFrame(10_000)).resolves.toBe(true);
+  });
+
+  it("resolves false after the timeout or when reset() starts another project, and clears its timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = new PlayerState();
+      const timedOut = p.firstFrame(500);
+      await vi.advanceTimersByTimeAsync(499);
+      p.ready = false; // a tier switch is not a presented frame
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(timedOut).resolves.toBe(false);
+      const generation = p.generation;
+      const superseded = p.firstFrame(500);
+      p.reset();
+      await expect(superseded).resolves.toBe(false);
+      expect(p.generation).toBe(generation + 1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("QUE-03 loop wrap", () => {
   it("does not wrap again while the previous wrap's seek is still in flight", () => {
     const p = new PlayerState();

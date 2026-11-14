@@ -52,9 +52,20 @@ export class PlayerState {
   }
 
   playback = $state.raw<PlaybackInfo | null>(null);
-  /** First frame decoded for the current playback tier. */
-  ready = $state(false);
+  private framePresented = $state(false);
+  /** Settled by `ready = true`, their timeout or `reset()`; see `firstFrame()`. */
+  private firstFrameWaiters = new Set<() => void>();
   error = $state<string | null>(null);
+
+  /** First frame decoded for the current playback tier (set by Player.svelte). */
+  get ready(): boolean {
+    return this.framePresented;
+  }
+
+  set ready(value: boolean) {
+    this.framePresented = value;
+    if (value) this.settleFirstFrameWaiters();
+  }
 
   timeOffset = $state(0);
   /** Nominal frame duration (PLY-04); VFR stepping uses the media index. */
@@ -98,6 +109,28 @@ export class PlayerState {
   /** PLY-04: nominal frame duration from the probe's rational rate. */
   setFrameRate(rate: string | null | undefined): void {
     this.frameDuration = frameDurationOf(rate);
+  }
+
+  /**
+   * Waits for a frame of the current source to be on screen (`ready`): resolves `true` then,
+   * `false` after `timeoutMs` or when `reset()` (another project) comes first; compare
+   * `generation` to tell those apart. Background jobs use it to stay off the open path (AC-14).
+   */
+  firstFrame(timeoutMs: number): Promise<boolean> {
+    if (this.framePresented) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const settle = (): void => {
+        clearTimeout(timer);
+        this.firstFrameWaiters.delete(settle);
+        resolve(this.framePresented);
+      };
+      const timer = setTimeout(settle, timeoutMs);
+      this.firstFrameWaiters.add(settle);
+    });
+  }
+
+  private settleFirstFrameWaiters(): void {
+    for (const settle of [...this.firstFrameWaiters]) settle();
   }
 
   private scheduleFrameCallback(): void {
@@ -283,6 +316,7 @@ export class PlayerState {
     this.restoreTime = null;
     this.presentedMediaTime = null;
     this.generation++;
+    this.settleFirstFrameWaiters();
   }
 }
 

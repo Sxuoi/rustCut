@@ -86,6 +86,8 @@ export interface Backend {
   requestPlayback(tier: PlaybackTier): Promise<PlaybackInfo>;
   startWaveform(track: number): Promise<void>;
   getMediaIndex(): Promise<MediaIndexInfo | null>;
+  /** Build the frame index with a packet scan if the open could not (call after the first frame). */
+  startMediaIndex(): Promise<void>;
 
   /** Show a file this project exported in the OS file manager. */
   revealPath(path: string): Promise<void>;

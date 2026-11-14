@@ -751,8 +751,9 @@ async fn settings_timestamps_and_info() {
     h.core.close_project().await;
 }
 
-/// The frame index arrives as an event and via `get_media_index` (PLY-06); waveform chunks
-/// stream (PLY-05); a Remux request returns a playable cache file.
+/// The frame index arrives as an event and via `get_media_index` (PLY-06); for Matroska only
+/// once `start_media_index` asks for the packet scan, which the UI does after the first frame
+/// (AC-14). Waveform chunks stream (PLY-05); a Remux request returns a playable cache file.
 #[tokio::test(flavor = "multi_thread")]
 async fn background_media_jobs() {
     let Some(h) = harness() else { return };
@@ -761,6 +762,18 @@ async fn background_media_jobs() {
     };
     let opened = h.core.open_path(&s(&video)).await.expect("open");
     assert!(opened.playback.is_some());
+    let early = h
+        .sink
+        .wait_for(Duration::from_secs(2), |e| {
+            matches!(e, AppEvent::MediaIndex { .. })
+        })
+        .await;
+    assert!(early.is_none(), "no packet scan during the open");
+    assert!(h.core.get_media_index().expect("index").is_none());
+    h.core.start_media_index().expect("start the packet scan");
+    h.core
+        .start_media_index()
+        .expect("asking again while it runs is harmless");
     let got = h
         .sink
         .wait_for(Duration::from_secs(30), |e| {
@@ -794,6 +807,29 @@ async fn background_media_jobs() {
         "{info:?}"
     );
     h.core.release_playback();
+    h.core.close_project().await;
+}
+
+/// AC-14 / §7.3: an MP4's index comes from its sample tables during the open, without
+/// `start_media_index`, because the Player reads its first keyframe at the first frame.
+#[tokio::test(flavor = "multi_thread")]
+async fn mp4_index_is_built_by_the_open() {
+    let Some(h) = harness() else { return };
+    let Some(video) = copy_fixture(Fixture::Baseline1080p60, &h.root.join("v"), "index.mp4") else {
+        return;
+    };
+    h.core.open_path(&s(&video)).await.expect("open");
+    let got = h
+        .sink
+        .wait_for(Duration::from_secs(30), |e| {
+            matches!(e, AppEvent::MediaIndex { .. })
+        })
+        .await;
+    assert!(got.is_some(), "sample-table index announced by the open");
+    assert!(h.core.get_media_index().expect("index").is_some());
+    h.core
+        .start_media_index()
+        .expect("nothing left to build: a no-op");
     h.core.close_project().await;
 }
 

@@ -96,28 +96,39 @@ impl MediaService {
         on_progress: impl Fn(f64) + Send,
         cancel: CancelToken,
     ) -> Result<BuiltIndex, MediaError> {
+        if let Some(built) = self.quick_index(path, source).await {
+            if built.source == IndexSource::Cache {
+                on_progress(1.0);
+            }
+            return Ok(built);
+        }
+        let built = BuiltIndex {
+            index: self
+                .scan_packets(path, source, on_progress, &cancel)
+                .await?,
+            source: IndexSource::PacketScan,
+        };
+        save_cache(&self.index_cache_path(source), &built);
+        Ok(built)
+    }
+
+    /// Steps 1 and 2 of [`build_index_cancellable`](Self::build_index_cancellable) only: the
+    /// cache, else the MP4/MOV sample tables (reading at most the `moov` box). `None` when only
+    /// the packet scan, which reads the whole file, can build the index.
+    pub async fn quick_index(&self, path: &Path, source: &SourceInfo) -> Option<BuiltIndex> {
         let cache_path = self.index_cache_path(source);
         if let Some(index) = load_cache(&cache_path) {
-            on_progress(1.0);
-            return Ok(BuiltIndex {
+            return Some(BuiltIndex {
                 index,
                 source: IndexSource::Cache,
             });
         }
-        let built = match self.sample_table_index(path, source).await {
-            Some(index) => BuiltIndex {
-                index,
-                source: IndexSource::SampleTable,
-            },
-            None => BuiltIndex {
-                index: self
-                    .scan_packets(path, source, on_progress, &cancel)
-                    .await?,
-                source: IndexSource::PacketScan,
-            },
+        let built = BuiltIndex {
+            index: self.sample_table_index(path, source).await?,
+            source: IndexSource::SampleTable,
         };
         save_cache(&cache_path, &built);
-        Ok(built)
+        Some(built)
     }
 
     async fn sample_table_index(&self, path: &Path, source: &SourceInfo) -> Option<MediaIndex> {

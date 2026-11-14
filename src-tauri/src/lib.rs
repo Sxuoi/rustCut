@@ -92,6 +92,7 @@ pub fn run() {
             commands::request_playback,
             commands::start_waveform,
             commands::get_media_index,
+            commands::start_media_index,
             commands::reveal_path,
             commands::open_output_folder,
             commands::clear_cache,

@@ -31,6 +31,7 @@ retry_failed
 request_playback
 start_waveform
 get_media_index
+start_media_index
 reveal_path
 open_output_folder
 clear_cache

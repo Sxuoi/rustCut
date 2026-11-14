@@ -86,6 +86,8 @@ pub(crate) struct IndexEntry {
 #[derive(Default)]
 pub(crate) struct Jobs {
     pub index: CancelToken,
+    /// The `index` job may run the packet scan (`AppCore::start_media_index` started it).
+    pub index_full: bool,
     pub playback: CancelToken,
     pub waveforms: HashMap<u32, CancelToken>,
     pub growth: Option<GrowthWatch>,

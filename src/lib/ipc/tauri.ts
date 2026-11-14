@@ -94,6 +94,7 @@ export class TauriBackend implements Backend {
   requestPlayback = (tier: PlaybackTier) => call<PlaybackInfo>("request_playback", { tier });
   startWaveform = (track: number) => call<void>("start_waveform", { track });
   getMediaIndex = () => call<MediaIndexInfo | null>("get_media_index");
+  startMediaIndex = () => call<void>("start_media_index");
 
   revealPath = (path: string) => call<void>("reveal_path", { path });
   openOutputFolder = () => call<void>("open_output_folder");

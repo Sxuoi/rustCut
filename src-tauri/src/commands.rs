@@ -292,6 +292,12 @@ pub fn get_media_index(state: State<'_, AppState>) -> Res<Option<MediaIndexInfo>
     state.core.get_media_index()
 }
 
+/// Build the frame index with a packet scan if the open could not (called after the first frame).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn start_media_index(state: State<'_, AppState>) -> Res<()> {
+    state.core.start_media_index()
+}
+
 /// Show an exported file or the output folder in the file manager.
 #[tauri::command(rename_all = "snake_case")]
 pub fn reveal_path(state: State<'_, AppState>, path: String) -> Res<()> {

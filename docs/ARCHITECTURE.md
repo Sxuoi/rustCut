@@ -105,6 +105,7 @@ All commands: `#[tauri::command(rename_all = "snake_case")]`, return
 | `request_playback` | `tier: PlaybackTier` | `PlaybackInfo` (starts remux/proxy if needed; progress via events) |
 | `start_waveform` | `track: u32` (1-based) | `()` (chunks via events) |
 | `get_media_index` | – | `Option<MediaIndexInfo>` |
+| `start_media_index` | – | `()`: packet-scan index after the first frame (`MediaIndex` event) |
 | `reveal_path` | `path` | `()` — only paths this project exported (or its output dir) |
 | `open_output_folder` | – | `()` |
 | `clear_cache` | – | `u64` bytes freed |
