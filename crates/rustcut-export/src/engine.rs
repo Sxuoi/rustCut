@@ -11,8 +11,8 @@ use crate::sleep::SleepGuard;
 use rustcut_ffmpeg::probe::parse_verify_json;
 use rustcut_ffmpeg::{
     ContainerDecision, ExportCommand, FailureKind, JobSpec, MediaIndex, ProgressParser,
-    ProgressUpdate, ResolvedEncoder, build_export_command, classify, first_error_line, fraction,
-    lossless_container, rejected_arguments, verify_args,
+    ProgressUpdate, ResolvedEncoder, build_export_command, classify_attempt, first_error_line,
+    fraction, lossless_container, verify_args,
 };
 use rustcut_model::{
     BatchInfo, BatchState, BatchSummary, Clip, ClipFinished, ClipOutcome, ClipProgress,
@@ -1011,16 +1011,8 @@ impl Batch {
                     Some(c) => format!("FFmpeg failed with exit code {c}"),
                     None => "FFmpeg was terminated unexpectedly".to_string(),
                 });
-                let mut kind = classify(&text);
-                // A build without this hardware encoder rejects the encoder's own options before
-                // anything runs, for example NVENC's `-rc` on macOS: the encoder is unavailable.
-                if kind == FailureKind::Other
-                    && matches!(encoder, ResolvedEncoder::Hardware(_))
-                    && rejected_arguments(&text)
-                {
-                    kind = FailureKind::HwEncoderFailed;
-                }
-                (kind, msg)
+                let hardware = matches!(encoder, ResolvedEncoder::Hardware(_));
+                (classify_attempt(&text, hardware), msg)
             };
             return Attempt::Failed(Failure {
                 kind,

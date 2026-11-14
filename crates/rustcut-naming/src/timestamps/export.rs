@@ -381,7 +381,13 @@ mod tests {
 
     fn source(frame_rate: &str) -> SourceInfo {
         SourceInfo {
-            path: "D:\\Videos\\live stream & co.mp4".into(),
+            // A native absolute path; on Unix `D:\...` would be one file name containing backslashes.
+            path: if cfg!(windows) {
+                "D:\\Videos\\live stream & co.mp4"
+            } else {
+                "/Videos/live stream & co.mp4"
+            }
+            .into(),
             relative_path: "live stream & co.mp4".into(),
             fingerprint: Fingerprint {
                 size_bytes: 1,

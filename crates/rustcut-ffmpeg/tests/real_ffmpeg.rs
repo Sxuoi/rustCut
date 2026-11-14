@@ -5,7 +5,7 @@
 //! Paths contain spaces and non-Latin characters (M18).
 
 use rustcut_ffmpeg::compat::{MP4_AUDIO_CODECS, MP4_VIDEO_CODECS};
-use rustcut_ffmpeg::failure::{FailureKind, classify};
+use rustcut_ffmpeg::failure::{FailureKind, classify, classify_attempt};
 use rustcut_ffmpeg::probe::parse_verify_json;
 use rustcut_ffmpeg::{
     ExportCommand, JobSpec, Muxer, Probe, ProgressParser, ProgressUpdate, ResolvedEncoder,
@@ -738,7 +738,7 @@ fn exp13_hardware_detection_and_export() {
                 stderr.lines().next().unwrap_or_default()
             );
             assert_ne!(
-                classify(&stderr),
+                classify_attempt(&stderr, true),
                 FailureKind::Other,
                 "{enc:?} failure should be classified: {stderr}"
             );

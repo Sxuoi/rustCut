@@ -41,7 +41,15 @@ jobs:
       - name: Engine tests and AC-11 sanitisation vectors
         shell: pwsh
         run: |
-          $env:RUSTCUT_FFMPEG_DIR = Split-Path (Get-Command ffmpeg).Source
+          $ffmpeg = (Get-Command ffmpeg).Source
+          # Chocolatey puts launcher shims on PATH, and killing a shim (a cancelled export) leaves
+          # the real FFmpeg running. The tests use the real binaries, like the app's sidecars.
+          if ($IsWindows -and $env:ChocolateyInstall) {
+            $real = Get-ChildItem (Join-Path $env:ChocolateyInstall 'lib\ffmpeg') -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+            if ($real) { $ffmpeg = $real.FullName }
+          }
+          $env:RUSTCUT_FFMPEG_DIR = Split-Path $ffmpeg
+          Write-Host "FFmpeg for the tests: $env:RUSTCUT_FFMPEG_DIR"
           $env:FFMPEG_DIR = $env:RUSTCUT_FFMPEG_DIR
           $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP 'rustcut-engine'; cargo test --locked --no-fail-fast -p rustcut-model -p rustcut-framing -p rustcut-naming -p rustcut-ffmpeg -p rustcut-project -p rustcut-export
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

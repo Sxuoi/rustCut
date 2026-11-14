@@ -54,7 +54,7 @@ pub use args::{
 };
 pub use build::{JobSpec, ResolvedEncoder, build_export_command};
 pub use compat::{ContainerDecision, LosslessAudio, lossless_container};
-pub use failure::{FailureKind, classify, first_error_line, rejected_arguments};
+pub use failure::{FailureKind, classify, classify_attempt, first_error_line};
 pub use hw::{HwVideoArgs, hw_test_args, hw_video_args};
 pub use index::{MediaIndex, parse_packet_csv};
 pub use mime::mime_type;

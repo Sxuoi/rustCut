@@ -176,11 +176,22 @@ pub fn classify(tail: &str) -> FailureKind {
     }
 }
 
-/// FFmpeg refused its own command line before running anything: "Unrecognized option 'rc'.",
-/// then "Error splitting the argument list: Option not found". A build without a hardware
-/// encoder rejects that encoder's own options this way: Homebrew's FFmpeg has no NVENC, so it
-/// does not know `-rc`. For a hardware attempt, this means the encoder is unavailable (EXP-13).
-pub fn rejected_arguments(tail: &str) -> bool {
+/// [`classify`] for one export or detection attempt. When the attempt used a hardware encoder and
+/// FFmpeg rejected the command line itself, the encoder is unavailable in this build (EXP-13).
+/// A build without a hardware encoder rejects that encoder's own options before anything runs.
+/// For example, Homebrew's FFmpeg has no NVENC, so it reports "Unrecognized option 'rc'.".
+pub fn classify_attempt(tail: &str, hardware: bool) -> FailureKind {
+    let kind = classify(tail);
+    if hardware && kind == FailureKind::Other && rejected_arguments(tail) {
+        FailureKind::HwEncoderFailed
+    } else {
+        kind
+    }
+}
+
+/// FFmpeg refused its own command line ("Unrecognized option 'rc'.", then "Error splitting the
+/// argument list: Option not found").
+fn rejected_arguments(tail: &str) -> bool {
     tail.lines().any(|line| {
         let line = line.to_ascii_lowercase();
         line.contains("unrecognized option") || line.contains("error splitting the argument list")
@@ -293,13 +304,15 @@ mod tests {
         // Homebrew's FFmpeg (no NVENC) on an NVENC command line.
         let mac =
             "Unrecognized option 'rc'.\nError splitting the argument list: Option not found\n";
-        assert!(rejected_arguments(mac));
-        // Only the engine, which knows the attempt used a hardware encoder, reads it that way.
+        assert_eq!(classify_attempt(mac, true), FailureKind::HwEncoderFailed);
+        assert!(classify_attempt(mac, true).retry_with_software());
+        // A libx264 attempt with a rejected option is an ordinary failure.
+        assert_eq!(classify_attempt(mac, false), FailureKind::Other);
         assert_eq!(classify(mac), FailureKind::Other);
-        assert!(!rejected_arguments(
-            "[h264_nvenc @ 0x1] No capable devices found"
-        ));
-        assert!(!rejected_arguments(""));
+        // Other failures keep their own kind.
+        let disk = "av_interleaved_write_frame(): No space left on device";
+        assert_eq!(classify_attempt(disk, true), FailureKind::DiskFull);
+        assert_eq!(classify_attempt("", true), FailureKind::Other);
     }
 
     #[test]
