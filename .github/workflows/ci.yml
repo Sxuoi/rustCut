@@ -43,7 +43,7 @@ jobs:
         run: |
           $env:RUSTCUT_FFMPEG_DIR = Split-Path (Get-Command ffmpeg).Source
           $env:FFMPEG_DIR = $env:RUSTCUT_FFMPEG_DIR
-          $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP 'rustcut-engine'; cargo test --locked -p rustcut-model -p rustcut-framing -p rustcut-naming -p rustcut-ffmpeg -p rustcut-project -p rustcut-export
+          $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP 'rustcut-engine'; cargo test --locked --no-fail-fast -p rustcut-model -p rustcut-framing -p rustcut-naming -p rustcut-ffmpeg -p rustcut-project -p rustcut-export
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   frontend:

@@ -12,7 +12,7 @@ use rustcut_ffmpeg::probe::parse_verify_json;
 use rustcut_ffmpeg::{
     ContainerDecision, ExportCommand, FailureKind, JobSpec, MediaIndex, ProgressParser,
     ProgressUpdate, ResolvedEncoder, build_export_command, classify, first_error_line, fraction,
-    lossless_container, verify_args,
+    lossless_container, rejected_arguments, verify_args,
 };
 use rustcut_model::{
     BatchInfo, BatchState, BatchSummary, Clip, ClipFinished, ClipOutcome, ClipProgress,
@@ -41,6 +41,8 @@ const MAX_SESSION_RETRIES: u32 = 2;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// Timeout of the output probe.
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a failed or cancelled clip keeps retrying to delete its `.part` file.
+const DISCARD_RETRY: Duration = Duration::from_secs(10);
 
 /// Static configuration of the engine.
 #[derive(Debug, Clone)]
@@ -930,7 +932,7 @@ impl Batch {
             });
         }
         let part = part_path(&final_planned);
-        let (cmd, _encoder, note) = self.command_for(item, &part, force_software);
+        let (cmd, encoder, note) = self.command_for(item, &part, force_software);
         if let Some(n) = note {
             append_log(log, &n);
         }
@@ -1009,7 +1011,16 @@ impl Batch {
                     Some(c) => format!("FFmpeg failed with exit code {c}"),
                     None => "FFmpeg was terminated unexpectedly".to_string(),
                 });
-                (classify(&text), msg)
+                let mut kind = classify(&text);
+                // A build without this hardware encoder rejects the encoder's own options before
+                // anything runs, for example NVENC's `-rc` on macOS: the encoder is unavailable.
+                if kind == FailureKind::Other
+                    && matches!(encoder, ResolvedEncoder::Hardware(_))
+                    && rejected_arguments(&text)
+                {
+                    kind = FailureKind::HwEncoderFailed;
+                }
+                (kind, msg)
             };
             return Attempt::Failed(Failure {
                 kind,
@@ -1118,11 +1129,24 @@ impl Batch {
     }
 
     async fn discard_part(&self, part: &Path) {
-        for _ in 0..40 {
+        // Windows can refuse the delete for a while after FFmpeg exits, while another process
+        // still has the new file open: an antivirus scan, or the search indexer. Keep trying
+        // with growing pauses.
+        let deadline = Instant::now() + DISCARD_RETRY;
+        let mut pause = Duration::from_millis(25);
+        loop {
             match std::fs::remove_file(part) {
                 Ok(()) => break,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
-                Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+                Err(e) if Instant::now() >= deadline => {
+                    // The journal entry stays, so the next start deletes the file (cleanup_stale_with).
+                    tracing::warn!(path = %part.display(), error = %e, "could not delete a partial export; it is removed at the next start");
+                    return;
+                }
+                Err(_) => {
+                    tokio::time::sleep(pause).await;
+                    pause = (pause * 2).min(Duration::from_millis(500));
+                }
             }
         }
         if let Err(e) = self.shared.journal.remove(part) {

@@ -238,7 +238,8 @@ async fn ac10_cancel_mid_clip_leaves_nothing_behind() {
         sink.outcome(project.clips[0].id),
         Some(ClipOutcome::Cancelled)
     ));
-    assert!(env.leftover_parts().is_empty(), "no .part left");
+    let left = env.leftover_parts();
+    assert!(left.is_empty(), "no .part left: {left:?}");
     assert!(!entry.part_path.exists());
     assert!(journal.entries().is_empty(), "journal entry dropped");
     assert!(!is_process_running(pid), "the FFmpeg process is gone");

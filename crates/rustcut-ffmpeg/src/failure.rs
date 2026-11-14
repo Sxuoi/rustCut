@@ -176,6 +176,17 @@ pub fn classify(tail: &str) -> FailureKind {
     }
 }
 
+/// FFmpeg refused its own command line before running anything: "Unrecognized option 'rc'.",
+/// then "Error splitting the argument list: Option not found". A build without a hardware
+/// encoder rejects that encoder's own options this way: Homebrew's FFmpeg has no NVENC, so it
+/// does not know `-rc`. For a hardware attempt, this means the encoder is unavailable (EXP-13).
+pub fn rejected_arguments(tail: &str) -> bool {
+    tail.lines().any(|line| {
+        let line = line.to_ascii_lowercase();
+        line.contains("unrecognized option") || line.contains("error splitting the argument list")
+    })
+}
+
 /// The most specific error line of a stderr tail, with FFmpeg's
 /// `[component @ 0x…]` prefixes reduced to `component: ` (stable across
 /// runs). Generic follow-ups such as `Conversion failed!` are skipped; falls
@@ -275,6 +286,20 @@ mod tests {
             assert_eq!(kind, FailureKind::HwEncoderFailed, "{msg}");
             assert!(kind.retry_with_software() && !kind.pauses_batch());
         }
+    }
+
+    #[test]
+    fn exp13_rejected_arguments_from_a_build_without_the_encoder() {
+        // Homebrew's FFmpeg (no NVENC) on an NVENC command line.
+        let mac =
+            "Unrecognized option 'rc'.\nError splitting the argument list: Option not found\n";
+        assert!(rejected_arguments(mac));
+        // Only the engine, which knows the attempt used a hardware encoder, reads it that way.
+        assert_eq!(classify(mac), FailureKind::Other);
+        assert!(!rejected_arguments(
+            "[h264_nvenc @ 0x1] No capable devices found"
+        ));
+        assert!(!rejected_arguments(""));
     }
 
     #[test]

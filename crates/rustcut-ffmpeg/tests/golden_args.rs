@@ -404,8 +404,19 @@ fn s7_6_paths_pass_through_unmodified() {
     let src = livestream();
     let s = settings(Preset::Lossless);
     let container = lossless_container(&src, &s);
-    let input = Path::new("D:/Rekaman Siaran/Bahas Patch 2.0 🔥 «финал».mkv");
-    let output = Path::new("D:/Rekaman Siaran/clips/02_Bahas Patch 🔥.mp4.part");
+    // Absolute paths in the platform's own form (on Unix `D:/...` is relative and gets `./`).
+    let (input, output) = if cfg!(windows) {
+        (
+            "D:/Rekaman Siaran/Bahas Patch 2.0 🔥 «финал».mkv",
+            "D:/Rekaman Siaran/clips/02_Bahas Patch 🔥.mp4.part",
+        )
+    } else {
+        (
+            "/media/Rekaman Siaran/Bahas Patch 2.0 🔥 «финал».mkv",
+            "/media/Rekaman Siaran/clips/02_Bahas Patch 🔥.mp4.part",
+        )
+    };
+    let (input, output) = (Path::new(input), Path::new(output));
     let args = build_export_command(&JobSpec {
         input,
         output_part: output,
