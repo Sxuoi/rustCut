@@ -28,7 +28,9 @@
 //! * The first `-progress` block reports `out_time_us=N/A` and `speed=N/A`.
 //! * AMF's QVBR rate control fails to initialise on tiny frames (256×256 →
 //!   `encoder->Init() failed with error 4`) while 320×240 and larger work, so
-//!   the detection encode uses 640×360 ([`hw::HW_TEST_SIZE`]).
+//!   the detection encode uses 640×360 ([`hw::HW_TEST_SIZE`]). QVBR also needs
+//!   AMF's pre-analysis, which held encodes near 60 frames per second on a
+//!   Radeon 780M, so AMF uses `vbr_peak` or `cqp` instead ([`hw::hw_video_args`]).
 //! * The mp4 muxer now accepts PCM (`ipcm`), MP2, Vorbis, DTS, MPEG-2, MJPEG
 //!   and FFV1 via stream copy; players do not, so [`compat`] keeps a
 //!   stricter, playback-driven allow-list.

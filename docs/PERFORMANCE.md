@@ -206,7 +206,9 @@ export command with `-rc vbr_peak -b:v 12M -maxrate 16M -bufsize 32M` reached 5.
 60 s) but wrote 12 Mbps where QVBR wrote 2.6 Mbps for this clip. Choosing is a product decision:
 QVBR (quality-targeted, about 1× here) or `vbr_peak` with a target derived from the preset (fast;
 needs a quality check such as VMAF). The startup detection encode uses the same QVBR mode. The
-PRD target refers to an RTX 3060-class NVENC, which could not be measured here.
+PRD target refers to an RTX 3060-class NVENC, which could not be measured here. The VMAF
+comparison is under "AMF rate control on real clips" below; it also shows that the current QVBR
+level gives lower quality than intended.
 
 #### Measurement notes for perf.mjs
 
@@ -308,6 +310,59 @@ first column shows the app's part more reliably.
   anime MKV 1.03–1.07 s (before 1.41–1.56 s), iPhone HEVC 10-bit HDR 1.43–1.96 s with a median
   of 1.67 s (before 1.83–2.04 s). The HEVC clip still exceeds 1.5 s although its open in a
   running app takes 0.28 s; the extra time on a cold start was not investigated further.
+
+#### AMF rate control on real clips (VMAF)
+
+The vertical 1080×1920 export (centre 9:16 crop, lanczos scale, the HDR-to-SDR chain for the
+iPhone clip, `-maxrate 16M -bufsize 32M`) encoded with each setting by the release build's
+FFmpeg, and scored with VMAF (`libvmaf`, model vmaf_v0.6.1) against the same filter chain
+without encoding, frames paired by index. Speed includes decoding and filtering, as in an
+export. Segments: DJI 4K59.94 drone clip 0–15 s, iPhone 1080p24 HLG clip 0–20 s, 720p23.976
+anime episode 5:00–5:30. The script is not in the repository. Values: speed, bitrate, VMAF mean
+(1st percentile).
+
+| Setting | DJI drone, 4K60 | iPhone, HDR to SDR | Anime, 720p upscaled |
+| :--- | :--- | :--- | :--- |
+| AMF QVBR 20 (current) | 0.94×, 8.5 Mbps, 69.0 (53.6) | 1.83×, 2.3 Mbps, 70.8 (62.3) | 1.86×, 0.4 Mbps, 75.6 (66.5) |
+| AMF QVBR 30 | 0.94×, 15.3 Mbps, 81.5 (67.9) | 1.85×, 4.3 Mbps, 83.0 (76.0) | 2.39×, 0.6 Mbps, 84.1 (76.2) |
+| AMF `vbr_peak` 6 Mbps | 2.55×, 5.7 Mbps, 63.0 (50.7) | 3.08×, 5.7 Mbps, 93.7 (87.1) | 12.2×, 5.4 Mbps, 97.9 (95.9) |
+| AMF `vbr_peak` 10 Mbps | 2.27×, 9.5 Mbps, 75.9 (65.2) | 3.08×, 9.7 Mbps, 97.5 (92.8) | 12.1×, 7.8 Mbps, 98.1 (96.5) |
+| AMF `vbr_peak` 14 Mbps | 2.36×, 13.6 Mbps, 82.9 (71.7) | 3.06×, 13.7 Mbps, 98.7 (96.0) | 12.1×, 9.6 Mbps, 98.1 (96.6) |
+| libx264 CRF 20 (software preset) | 1.18×, 16.7 Mbps, 91.8 (84.2) | 1.60×, 7.7 Mbps, 96.1 (92.0) | 5.68×, 1.5 Mbps, 97.4 (94.4) |
+
+- The current AMF setting is both the slowest AMF mode and well below the software preset's
+  quality on every clip: VMAF 69–76 where libx264 CRF 20 reaches 92–97.
+- AMF's QVBR level runs the other way from CRF: level 30 spends more bits and scores higher
+  than level 20 on all three clips. `hw.rs` passes the preset's CRF (20, or 18 for the
+  frame-accurate original preset) as the level, so hardware exports get less quality than
+  intended. QVBR stays at about 60 frames per second either way.
+- `vbr_peak` is 2–12× realtime. At 10 Mbps it matches or beats the software preset on the
+  iPhone and anime clips, at several times the anime's bitrate. On the detailed 4K drone
+  footage no AMF setting within the 16 Mbps cap comes near libx264 (75.9 at 10 Mbps, 82.9 at
+  14 Mbps, against 91.8).
+- On the 4K60 source every fast setting stops near 2.3×: decoding 4K60 on the CPU limits the
+  export, so 4× there would also need hardware decoding.
+
+The frame-accurate original preset (CRF 18, no cap, source resolution) used the same QVBR mode.
+The same method, without the crop and scale (DJI 0–5 s at 4K):
+
+| Setting | DJI drone, 4K60 | iPhone, HDR to SDR | Anime, 720p |
+| :--- | :--- | :--- | :--- |
+| AMF QVBR 18 (current) | 0.58×, 28 Mbps, 66.5 (50.8) | 1.62×, 1.8 Mbps, 73.0 (68.1) | 2.42×, 0.3 Mbps, 81.0 (74.1) |
+| AMF constant QP 18 | 1.03×, 384 Mbps, 99.5 (96.9) | 3.50×, 11.8 Mbps, 97.9 (95.1) | 22.2×, 1.5 Mbps, 97.3 (95.5) |
+| AMF constant QP 22 | 1.06×, 283 Mbps, 99.2 (95.3) | 3.50×, 7.0 Mbps, 96.2 (93.2) | 22.6×, 0.9 Mbps, 96.4 (93.7) |
+| libx264 CRF 18 (software preset) | 0.28×, 200 Mbps, 98.4 (91.3) | 1.97×, 8.7 Mbps, 96.7 (94.7) | 13.4×, 1.0 Mbps, 98.0 (95.6) |
+
+Chosen setting: `crates/rustcut-ffmpeg/src/hw.rs` now gives AMF `-rc vbr_peak -b:v 10M` (never
+above the preset's cap) with the existing `-maxrate 16M -bufsize 32M` for the vertical presets,
+and constant QP at CRF + 4 (`-rc cqp`, QP 22 for the original preset) when there is no cap. The
+start-up detection encode uses the vertical arguments, so it no longer uses QVBR either.
+
+perf.mjs on the rebuilt release (runs 7 and 8): vertical hardware export **4.81× and 4.67×,
+PASS** (h264_amf, 1080p60 source; before 0.97–1.11×). Software 1.78× and 1.89×, lossless 5.43
+and 5.59 s. Every other row matched the earlier runs. Only the two process-tree memory rows still
+fail (661 / 808–828 MB). Run 7's cold start, 2.44 s, was the first launch of the freshly built
+executable; run 8 measured 1.37 s.
 
 #### Real videos (informational)
 

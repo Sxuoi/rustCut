@@ -381,8 +381,8 @@ fn exp13_hardware_encoder_in_vertical_crop() {
     let got = job.args("o.mp4.part").join(" ");
     assert!(
         got.contains(
-            "-vf crop=608:1080:852:0,scale=1080:1920:flags=lanczos,setsar=1 -c:v h264_amf -quality quality -rc qvbr \
-             -qvbr_quality_level 20 -maxrate 16M -bufsize 32M -pix_fmt yuv420p -fps_mode passthrough -c:a aac"
+            "-vf crop=608:1080:852:0,scale=1080:1920:flags=lanczos,setsar=1 -c:v h264_amf -quality quality -rc vbr_peak \
+             -b:v 10M -maxrate 16M -bufsize 32M -pix_fmt yuv420p -fps_mode passthrough -c:a aac"
         ),
         "{got}"
     );

@@ -4,7 +4,7 @@
 //! | Encoder | Options (CRF = preset quality) |
 //! | :--- | :--- |
 //! | NVENC | `-preset p5 -rc vbr -cq CRF -b:v 0` (+ `-maxrate/-bufsize`) |
-//! | AMF | `-quality quality -rc qvbr -qvbr_quality_level CRF` (+ `-maxrate/-bufsize`) |
+//! | AMF | capped: `-quality quality -rc vbr_peak -b:v 10M -maxrate/-bufsize`; uncapped: `-quality quality -rc cqp -qp_i/-qp_p/-qp_b CRF+4` |
 //! | Quick Sync | `-preset medium -global_quality CRF` (ICQ; no cap), `-pix_fmt nv12` |
 //! | VideoToolbox | `-q:v 100−2·CRF` (+ `-maxrate`) |
 //! | VAAPI | `-rc_mode QVBR -global_quality CRF -b:v/-maxrate/-bufsize` when capped, `-rc_mode ICQ` otherwise; frames uploaded with `format=nv12,hwupload` on `-vaapi_device` |
@@ -17,10 +17,20 @@ use std::ffi::OsString;
 pub const VAAPI_DEVICE: &str = "/dev/dri/renderD128";
 /// Filter appended to the video chain so VAAPI receives hardware frames.
 pub const VAAPI_UPLOAD_FILTER: &str = "format=nv12,hwupload";
-/// Frame size of the detection encode. FFmpeg 9.0.2 + AMF fails to
+/// Frame size of the detection encode. FFmpeg 9.0.2 + AMF failed to
 /// initialise QVBR at 256×256 (`encoder->Init() failed with error 4`) but
-/// works from 320×240 up, so the test uses a small real-world size.
+/// worked from 320×240 up, so the test uses a small real-world size.
 pub const HW_TEST_SIZE: &str = "640x360";
+/// AMF average bit rate of the capped (vertical) presets: peak-constrained VBR at this
+/// target, up to the preset's cap. AMF's quality-targeted QVBR needs its pre-analysis, which
+/// held exports to about 60 frames per second on a Radeon 780M, and its level counts the
+/// other way from CRF. On real clips this target matched or beat libx264 at CRF 20 except on
+/// highly detailed 4K footage (docs/PERFORMANCE.md, "AMF rate control on real clips").
+pub const AMF_VBR_TARGET_BPS: u64 = 10_000_000;
+/// AMF constant QP of the uncapped presets: the preset's CRF plus this. QP 22 came within
+/// about 1.5 VMAF points of libx264 at CRF 18 on the same clips, at similar bit rates for
+/// 1080p and below.
+pub const AMF_CQP_OFFSET: u8 = 4;
 /// Detection encode quality/cap: the vertical presets' values, so the test
 /// exercises the same rate-control mode as real exports.
 const HW_TEST_CRF: u8 = crate::args::CRF_VERTICAL;
@@ -73,15 +83,22 @@ pub fn hw_video_args(
             base(v, Some(OUTPUT_PIX_FMT))
         }
         EncoderChoice::H264Amf => {
-            let mut v = strings(&[
-                "-quality",
-                "quality",
-                "-rc",
-                "qvbr",
-                "-qvbr_quality_level",
-                &q,
-            ]);
-            v.extend(cap(true));
+            let v = match maxrate_bps {
+                Some(peak) => {
+                    let target = fmt_bitrate(AMF_VBR_TARGET_BPS.min(peak));
+                    let mut v =
+                        strings(&["-quality", "quality", "-rc", "vbr_peak", "-b:v", &target]);
+                    v.extend(cap(true));
+                    v
+                }
+                None => {
+                    let qp = crf.saturating_add(AMF_CQP_OFFSET).min(51).to_string();
+                    strings(&[
+                        "-quality", "quality", "-rc", "cqp", "-qp_i", &qp, "-qp_p", &qp, "-qp_b",
+                        &qp,
+                    ])
+                }
+            };
             base(v, Some(OUTPUT_PIX_FMT))
         }
         EncoderChoice::H264Qsv => base(
@@ -184,7 +201,7 @@ mod tests {
         let amf = hw_video_args(EncoderChoice::H264Amf, 20, m, b).unwrap();
         assert_eq!(
             joined(&amf),
-            "-quality quality -rc qvbr -qvbr_quality_level 20 -maxrate 16M -bufsize 32M"
+            "-quality quality -rc vbr_peak -b:v 10M -maxrate 16M -bufsize 32M"
         );
         let qsv = hw_video_args(EncoderChoice::H264Qsv, 20, m, b).unwrap();
         assert_eq!(joined(&qsv), "-preset medium -global_quality 20");
@@ -212,12 +229,35 @@ mod tests {
         let amf = hw_video_args(EncoderChoice::H264Amf, 18, None, None).unwrap();
         assert_eq!(
             joined(&amf),
-            "-quality quality -rc qvbr -qvbr_quality_level 18"
+            "-quality quality -rc cqp -qp_i 22 -qp_p 22 -qp_b 22"
         );
         let va = hw_video_args(EncoderChoice::H264Vaapi, 18, None, None).unwrap();
         assert_eq!(joined(&va), "-rc_mode ICQ -global_quality 18");
         let vt = hw_video_args(EncoderChoice::H264Videotoolbox, 18, None, None).unwrap();
         assert_eq!(joined(&vt), "-q:v 64");
+    }
+
+    /// AMF avoids QVBR (pre-analysis held exports near 60 fps): the target never exceeds a
+    /// lower cap, and the constant QP stays within H.264's 0–51.
+    #[test]
+    fn exp13_amf_target_and_qp_limits() {
+        let low_cap = hw_video_args(
+            EncoderChoice::H264Amf,
+            20,
+            Some(8_000_000),
+            Some(16_000_000),
+        )
+        .unwrap();
+        assert_eq!(
+            joined(&low_cap),
+            "-quality quality -rc vbr_peak -b:v 8M -maxrate 8M -bufsize 16M"
+        );
+        let worst = hw_video_args(EncoderChoice::H264Amf, 50, None, None).unwrap();
+        assert_eq!(
+            joined(&worst),
+            "-quality quality -rc cqp -qp_i 51 -qp_p 51 -qp_b 51"
+        );
+        assert!(!joined(&low_cap).contains("qvbr") && !joined(&worst).contains("qvbr"));
     }
 
     #[test]
@@ -246,7 +286,7 @@ mod tests {
         assert_eq!(
             args.join(" "),
             "-hide_banner -nostdin -v error -f lavfi -i testsrc2=size=640x360:rate=30:duration=1 -c:v h264_amf \
-             -quality quality -rc qvbr -qvbr_quality_level 20 -maxrate 16M -bufsize 32M -pix_fmt yuv420p -f null -"
+             -quality quality -rc vbr_peak -b:v 10M -maxrate 16M -bufsize 32M -pix_fmt yuv420p -f null -"
         );
         let va: Vec<String> = hw_test_args(EncoderChoice::H264Vaapi)
             .unwrap()
