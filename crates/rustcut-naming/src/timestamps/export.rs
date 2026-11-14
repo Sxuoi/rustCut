@@ -582,10 +582,12 @@ mod tests {
         let t = &e.text;
         assert!(t.contains("<fcpxml version=\"1.10\">"));
         assert!(t.contains("frameDuration=\"1001/30000s\""));
-        assert!(
-            t.contains("src=\"file:///D:/Videos/live%20stream%20%26%20co.mp4\""),
-            "{t}"
-        );
+        let url = if cfg!(windows) {
+            "file:///D:/Videos/live%20stream%20%26%20co.mp4"
+        } else {
+            "file:///Videos/live%20stream%20%26%20co.mp4"
+        };
+        assert!(t.contains(&format!("src=\"{url}\"")), "{t}");
         // 10 s = 300 frames = 300*1001/30000s.
         assert!(t.contains("start=\"300300/30000s\""), "{t}");
         assert!(t.contains("offset=\"0s\""));
