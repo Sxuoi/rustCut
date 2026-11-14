@@ -10,6 +10,7 @@ mod session;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use rustcut_model::{
     APP_VERSION, AddClipRequest, AddClipResult, AppEvent, AppInfo, AppSettings, CommandError,
@@ -136,8 +137,10 @@ impl AppCore {
         }
     }
 
-    /// Background warm-up at launch: probe the FFmpeg build and detect hardware encoders once.
-    pub async fn warm_up(&self) {
+    /// Background warm-up at launch: after `delay` ([`WARM_UP_DELAY`] in the app), probe the
+    /// FFmpeg build and detect hardware encoders once.
+    pub async fn warm_up(&self, delay: Duration) {
+        tokio::time::sleep(delay).await;
         let _ = self.caps().await;
         if self.inner.media.is_some() {
             let _ = self.detect_hw_encoders(false).await;
@@ -520,6 +523,11 @@ impl AppCore {
 /// Longest the final flush and teardown may take before the app exits regardless (a
 /// stalled network drive must not keep the window open forever).
 pub const SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long the launch warm-up waits before running FFmpeg (the capability listings and the
+/// hardware test encodes), so those processes do not compete with opening the launch file and
+/// presenting its first frame. Anything that needs them sooner runs them on demand.
+pub const WARM_UP_DELAY: Duration = Duration::from_secs(3);
 
 const SETTINGS_FILE: &str = "settings.json";
 

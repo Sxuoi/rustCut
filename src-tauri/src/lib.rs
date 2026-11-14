@@ -144,7 +144,9 @@ pub fn run() {
                 shutdown_done: AtomicBool::new(false),
             });
             shell::disable_browser_accelerators(app.handle());
-            tauri::async_runtime::spawn(async move { core.warm_up().await });
+            tauri::async_runtime::spawn(
+                async move { core.warm_up(crate::core::WARM_UP_DELAY).await },
+            );
             tracing::info!(elapsed_ms = started.elapsed().as_millis(), "setup finished");
             Ok(())
         })

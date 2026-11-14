@@ -25,13 +25,42 @@ function toastError(e: unknown): void {
   ui.toast({ level: "error", message: err.message, code: err.code });
 }
 
-/** Load settings, app info and recent projects (startup). Never throws. */
+/**
+ * Load settings, platform presets and recent projects (startup). Never throws. Only quick
+ * calls: app info waits for the backend's FFmpeg probe, so `loadAppInfo()` fetches it later.
+ */
 export async function loadAppContext(): Promise<void> {
-  const [info, settings] = await Promise.allSettled([backend.getAppInfo(), backend.getSettings(), loadPlatformPresets(backend)]);
-  if (info.status === "fulfilled") ui.setAppInfo(info.value);
+  const [settings] = await Promise.allSettled([backend.getSettings(), loadPlatformPresets(backend)]);
   if (settings.status === "fulfilled") ui.settings = settings.value;
   else ui.toast({ level: "warning", message: t("settings.loadFailed", { reason: BackendError.from(settings.reason).message }) });
   await refreshRecent();
+}
+
+/** App info (versions, folders, platform). Waits for the backend's FFmpeg probe. Never throws. */
+export async function loadAppInfo(): Promise<void> {
+  try {
+    ui.setAppInfo(await backend.getAppInfo());
+  } catch {
+    // The Settings dialog asks again when it opens.
+  }
+}
+
+/**
+ * Startup once the event loop runs (PRD §3.1 step 1): settings and recent projects, a project
+ * still open in the core (WebView reload), then the file given on the command line through the
+ * normal open flow. App info follows the first frame (or comes at once without a video): it
+ * waits for the backend's FFmpeg probe, which would otherwise hold up the launch file.
+ */
+export async function startUp(): Promise<void> {
+  await Promise.all([loadAppContext(), restoreSession()]);
+  try {
+    const launch = await backend.getLaunchPath();
+    if (launch && !project.loaded) await openPath(launch);
+  } catch (e) {
+    ui.error(BackendError.from(e).message, "launch");
+  }
+  if (project.loaded) await player.firstFrame(MEDIA_JOBS_START_TIMEOUT_MS);
+  await loadAppInfo();
 }
 
 /** Refresh the start screen's recent projects (PRJ-07). */

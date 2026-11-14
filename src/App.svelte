@@ -10,7 +10,7 @@
   import { startEventLoop } from "$lib/state/events";
   import { player } from "$lib/state/player.svelte";
   import { project } from "$lib/state/project.svelte";
-  import { loadAppContext, openPath, restoreSession } from "$lib/state/session";
+  import { openPath, startUp } from "$lib/state/session";
   import { ui } from "$lib/state/ui.svelte";
   import { roundMs } from "$lib/util/time";
   import { installFileDrop } from "$lib/components/shell/dragdrop";
@@ -57,15 +57,9 @@
           ui.error(t("app.eventsFailed", { reason: BackendError.from(e).message }), "events");
         }
       }
-      await Promise.all([loadAppContext(), restoreSession()]);
-      // A file given on the command line opens through the normal open flow
-      // (a WebView reload keeps the already-open project instead).
-      try {
-        const launch = await backend.getLaunchPath();
-        if (launch && !project.loaded) await openPath(launch);
-      } catch (e) {
-        ui.error(BackendError.from(e).message, "launch");
-      }
+      // Settings, a project kept across a WebView reload, then the launch file; app info
+      // after its first frame (see startUp).
+      await startUp();
     })();
     return () => {
       disposed = true;

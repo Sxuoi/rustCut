@@ -810,6 +810,20 @@ async fn background_media_jobs() {
     h.core.close_project().await;
 }
 
+/// The launch warm-up (no delay here) probes FFmpeg and runs the hardware-encoder detection,
+/// whose result is cached in the data folder for later launches.
+#[tokio::test(flavor = "multi_thread")]
+async fn warm_up_detects_hardware_encoders() {
+    let Some(h) = harness() else { return };
+    let cache = h.root.join("data").join("hw_encoders.json");
+    assert!(!cache.exists());
+    h.core.warm_up(Duration::ZERO).await;
+    assert!(
+        cache.is_file(),
+        "the warm-up ran the hardware-encoder detection"
+    );
+}
+
 /// AC-14 / §7.3: an MP4's index comes from its sample tables during the open, without
 /// `start_media_index`, because the Player reads its first keyframe at the first frame.
 #[tokio::test(flavor = "multi_thread")]

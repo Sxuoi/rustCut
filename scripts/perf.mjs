@@ -127,6 +127,10 @@ async function main() {
   // media folder while keeping the app/WebView data in the harness's isolated profile.
   ws.media = join(directory, `run-${process.pid}-${Date.now()}`);
   mkdirSync(ws.media);
+  // Exports (about 0.8 GB) go to the run folder too, which is removed at the end: in %TEMP%
+  // they could fill the system drive whenever WebView2 still holds the profile at cleanup.
+  ws.out = join(ws.media, "out");
+  mkdirSync(ws.out);
   [seed, source, waveform, padded] = [seed, source, waveform, padded].map((file) => {
     const path = join(ws.media, basename(file));
     linkSync(file, path);
@@ -292,6 +296,12 @@ async function main() {
     await waitReady(app);
     record("cold_start_ms", performance.now() - spawnedAt, "Spawn to playable editor, includes CDP attach/poll overhead; fresh app/WebView profile; OS cache not flushed.");
     await observeEvents();
+    // The launch warm-up (FFmpeg capability probe and hardware test encodes) starts a few
+    // seconds after launch; let it finish so its one-time work is not measured as the 20 GB
+    // file's open and playback. It ends by caching the encoder list in the fresh app data.
+    await waitFor(() => existsSync(join(ws.appdata, "data", "hw_encoders.json")),
+      { timeout: 60000, every: 100, what: "the launch warm-up (hardware-encoder cache)" })
+      .catch((error) => { report.warmUp = String(error); });
 
     await stage(["open_ms", "open_read_bytes", "open_tree_read_bytes", "large_tree_private_bytes", "large_core_private_bytes"], async () => {
       await app.invoke("close_project");

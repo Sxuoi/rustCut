@@ -6,7 +6,7 @@ import { dispatchEvent } from "./events";
 import { exporter } from "./exporter.svelte";
 import { player } from "./player.svelte";
 import { project } from "./project.svelte";
-import { applyOpenResult, MEDIA_JOBS_START_TIMEOUT_MS, openPath } from "./session";
+import { applyOpenResult, loadAppContext, MEDIA_JOBS_START_TIMEOUT_MS, openPath, startUp } from "./session";
 import { ui } from "./ui.svelte";
 
 beforeEach(() => {
@@ -219,6 +219,44 @@ describe("background media jobs after an open (AC-14)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("startUp: app info waits for the backend's FFmpeg probe (cold start)", () => {
+  it("loads settings and recent projects without asking for app info", async () => {
+    const info = vi.spyOn(backend, "getAppInfo");
+    await loadAppContext();
+    expect(info).not.toHaveBeenCalled();
+    expect(ui.settings).not.toBeNull();
+  });
+
+  it("opens the launch file first and asks for app info after its first frame", async () => {
+    const sample = await backend.getAppInfo();
+    let answer!: (value: typeof sample) => void;
+    const info = vi.spyOn(backend, "getAppInfo").mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.spyOn(backend, "getSnapshot").mockResolvedValue(null);
+    vi.spyOn(backend, "getLaunchPath").mockResolvedValue("/media/launch.mp4");
+    const open = vi.spyOn(backend, "openPath");
+    ui.appInfo = null;
+    const started = startUp();
+    await vi.waitFor(() => expect(project.loaded).toBe(true));
+    expect(open).toHaveBeenCalledWith("/media/launch.mp4");
+    expect(info).not.toHaveBeenCalled();
+    player.ready = true; // Player.svelte: first frame presented
+    await vi.waitFor(() => expect(info).toHaveBeenCalledOnce());
+    answer(sample);
+    await started;
+    expect(ui.appInfo).toEqual(sample);
+  });
+
+  it("asks for app info at once when no file was given", async () => {
+    vi.spyOn(backend, "getSnapshot").mockResolvedValue(null);
+    vi.spyOn(backend, "getLaunchPath").mockResolvedValue(null);
+    const info = vi.spyOn(backend, "getAppInfo");
+    ui.appInfo = null;
+    await startUp();
+    expect(info).toHaveBeenCalledOnce();
+    expect(ui.appInfo).not.toBeNull();
   });
 });
 

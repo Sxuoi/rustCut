@@ -1,9 +1,10 @@
 <script lang="ts">
   // App settings (AppSettings) + About. OWNER: fe-shell.
+  import { untrack } from "svelte";
   import type { AppSettings, ProjectLocation } from "$lib/bindings";
   import { t } from "$lib/i18n";
   import { backend, BackendError } from "$lib/ipc";
-  import { saveSettings } from "$lib/state/session";
+  import { loadAppInfo, saveSettings } from "$lib/state/session";
   import { ui } from "$lib/state/ui.svelte";
   import { MIN_CLIP_SEC_RANGE } from "$lib/util/marks";
   import Dialog from "./Dialog.svelte";
@@ -22,6 +23,12 @@
       error = ui.settings ? null : t("settings.unavailable");
       note = null;
     }
+  });
+
+  // App info normally arrives after the first frame (startUp); fetch it if it is still missing.
+  // Untracked, so its arrival does not reset the draft above.
+  $effect(() => {
+    if (ui.settingsOpen && untrack(() => ui.appInfo === null)) void loadAppInfo();
   });
 
   function close(): void {

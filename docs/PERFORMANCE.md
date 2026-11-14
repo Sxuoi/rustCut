@@ -57,8 +57,8 @@ measurement or target. Hardware results name the actual available encoder.
 JSON and a Markdown table are printed and saved as
 `.fixtures/perf/{quick,full}-v1-results.{json,md}`. Each report includes the build,
 fixture dimensions, durations, bitrate, raw latency samples, frame intervals,
-and process-counter samples. Run-specific hard links and project sidecars use
-a fresh directory on the fixture volume; the harness also creates a fresh app
+and process-counter samples. Run-specific hard links, project sidecars and the exported
+files use a fresh directory on the fixture volume; the harness also creates a fresh app
 and WebView profile. These are cleaned after the owned app exits. Generated
 inputs and reports remain for reuse. Do not compare numbers from busy machines
 or different build modes as if they were equivalent.
@@ -74,7 +74,7 @@ or different build modes as if they were equivalent.
 | Frame step | Ten real Period and Comma key presses in each direction, from keydown to new presented frame, reported as p95. |
 | Mark capture | Paused transport timestamp captured in the real I keydown handler compared with pending In. Equality is checked; the absence of IPC in the capture implementation remains covered by frontend tests/code review. Reported as INFO. |
 | Timeline | Exactly 500 clips created with `import_timestamps`, after an actual waveform completes. Dispatch wheel zooms over five seconds and collect `requestAnimationFrame` intervals; assert that the timeline summary changes. Report mean scheduling fps and p95 interval. This measures responsiveness while exercising redraws, not GPU presentation rate; display refresh limits the result. |
-| Memory | `PrivatePageCount` (private committed bytes) from Win32_Process for the owned Rust PID and all descendants during playback. Five samples, report peak core and tree totals. Compare small-file and 20 GB playback tree totals; the size delta is INFO because PRD defines no numeric flatness tolerance. This is not working-set/RSS memory. |
+| Memory | `PrivatePageCount` (private committed bytes) from Win32_Process for the owned Rust PID and all descendants during playback. Five samples, report peak core and tree totals. The 20 GB stage starts once the launch warm-up has written its hardware-encoder cache, so its test encodes are not counted as playback. Compare small-file and 20 GB playback tree totals; the size delta is INFO because PRD defines no numeric flatness tolerance. This is not working-set/RSS memory. |
 | Lossless | From `start_export` invocation through persisted completed statuses for all ten clips. Includes pre-flight, encoder detection if performed by the app, child-process creation and output verification; no encoder warmup call precedes it. |
 | Vertical | Media seconds divided by wall seconds, same completion endpoint, 1080×1920 output with 60 fps cap. Measure explicit libx264 and an available hardware encoder separately; no hardware yields INFO. |
 | Waveform | Fresh source/cache: open request to first nonempty waveform event, then final `done` event. Includes open/probe and the first presented frame, which the waveform job waits for (AC-14). Observes the app's existing Tauri channel callbacks and forwards them unchanged, so the UI also receives the waveform. |
@@ -157,12 +157,10 @@ empty app data. Traced launches (IPC requests timed in the page, `<video>` event
 Spawn to ready was 1.12–1.20 s with a fresh profile and empty app data, 1.05–1.17 s once the
 hardware-encoder cache exists, 0.89–0.96 s with a reused profile, and 1.44–1.61 s for the first
 launch after the heavy file I/O of a run, most likely because the binaries had to be read from
-disk again. Proposed
-fixes, each to be re-measured: open the launch file without waiting for `loadAppContext()`, or
-let `get_app_info` answer before the capability probe ends (the older recent-projects request
-must not overwrite the list from `applyOpenResult`); start `warm_up` after the first frame
-instead of in `setup`; start probing the launch path in `setup`. WebView2's own start and the
-fresh-profile cost are outside the app.
+disk again. Fixed afterwards (see "After the cold-start fix" below): the launch file no longer
+waits for app info, and the warm-up starts 3 s after setup instead of at once. Not done:
+probing the launch path already in `setup`. WebView2's own start and the fresh-profile cost
+are outside the app.
 
 **AC-14 reads (543 MB).** A real failure, not only the late snapshot. `startMediaJobs()` in
 `src/lib/state/session.ts` starts the waveform job as soon as `open_path` returns, before the
@@ -218,7 +216,14 @@ PRD target refers to an RTX 3060-class NVENC, which could not be measured here.
   processes that read the file (see "What is measured").
 - Memory (not changed): the small-file stage runs after the 20 GB stage in the same app. A
   fresh app per stage, or per-process samples for both stages, would separate the two budgets.
-- Cold start (not changed): report a reused-profile launch next to the first-ever one.
+- Cold start (not changed): report a reused-profile launch next to the first-ever one. It is a
+  single launch per run, so it varies by a few hundred milliseconds between runs.
+- Frame step (not changed): the p95 of 10 presses is the slowest press. In runs 3, 5 and 6 the
+  first step after the seek series took 100–109 ms while the median stayed at 88–95 ms; more
+  presses would make the p95 meaningful.
+- Exports and warm-up (changed with the cold-start fix): exports go to the run folder on the
+  fixture volume instead of `%TEMP%`, where three runs whose cleanup was blocked by WebView2
+  had left 1.7 GB on a nearly full system drive. The 20 GB stage waits for the launch warm-up.
 
 #### After the waveform fix and the AC-14 measurement change (working tree on top of eaf5d8a)
 
@@ -265,6 +270,44 @@ Measured on a new release build the same day:
   116 ms, frame step 99.7 / 99.1 ms (at the limit on the busier machine), timeline 75 fps,
   tree 678 MB (FAIL), 20 GB tree 793 MB (FAIL), Rust core 12.5 / 19.0 MB, lossless 6.76 s,
   vertical 1.68× software and 1.01× h264_amf (FAIL), auto-save 0.30 s.
+
+#### After the cold-start fix (working tree on top of 4031fb7)
+
+`loadAppContext()` no longer fetches app info, which waits for the backend's FFmpeg capability
+probe. `startUp()` (`src/lib/state/session.ts`) loads settings, recent projects and a project
+kept across a WebView reload, opens the launch file, and fetches app info only after its first
+frame (or at once without a video); the Settings dialog loads it if it is still missing. The
+launch warm-up (`AppCore::warm_up`: capability probe and hardware test encodes) now starts
+`WARM_UP_DELAY` (3 s) after setup; anything that needs it sooner runs it on demand. Tests:
+`src/lib/state/session.test.ts` (the launch file opens before app info is requested),
+`src-tauri/tests/e2e.rs` (`warm_up` still runs the detection); the app crate tests, Vitest
+535/535 and the e2e suite 31/31 pass with it.
+
+Startup traces on the release build, three launches per variant with the 60 s seed (medians).
+`open_path` now starts about 40 ms after DOMContentLoaded instead of about 150 ms:
+
+| Variant | DOMContentLoaded to first frame, before → after | Spawn to ready, before → after |
+| :--- | :--- | :--- |
+| Fresh profile and app data (as perf.mjs) | 565 → 449 ms | 1,141 → 1,017 ms |
+| Fresh profile, hardware cache present | 516 → 435 ms | 1,058 → 1,039 ms |
+| Reused profile | 398 → 337 ms | 913 → 885 ms |
+
+WebView2's own start before DOMContentLoaded varies by about 100 ms between runs, so the
+first column shows the app's part more reliably.
+
+- perf.mjs cold start: 1.08 s (run 5), 1.04 s (a rerun) and 1.43 s (run 6), all PASS; before
+  the fix 1.30–1.61 s. Run 5's exports failed because drive C: had 107 MB free (the backend's
+  pre-flight refused the export); the export folders that earlier runs had left in `%TEMP%`
+  were removed and perf.mjs now writes exports to its run folder.
+- Run 6's other rows: 20 GB open 1.15 s, AC-14 reads 39.9 MB, seek p95 101 ms, frame step
+  backward 100.3 ms, timeline 75 fps, Rust core 13.2 / 20.5 MB, lossless 5.63 s, vertical
+  software 1.98×, waveform 1.15 / 7.58 s and auto-save 0.29 s PASS; frame step forward
+  104.1 ms (the first step after the seek series; median 90 ms), process tree 659 MB, 20 GB
+  tree 800 MB and vertical h264_amf 1.11× **FAIL**.
+- Real clips, three fresh-profile launches each: DJI 4K60 1.19–1.23 s (before 1.54–2.31 s),
+  anime MKV 1.03–1.07 s (before 1.41–1.56 s), iPhone HEVC 10-bit HDR 1.43–1.96 s with a median
+  of 1.67 s (before 1.83–2.04 s). The HEVC clip still exceeds 1.5 s although its open in a
+  running app takes 0.28 s; the extra time on a cold start was not investigated further.
 
 #### Real videos (informational)
 
