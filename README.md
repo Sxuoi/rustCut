@@ -10,6 +10,15 @@ Built from `docs/PRD.md` (v1.3). Architecture and contracts: `docs/ARCHITECTURE.
 Stack: Rust (edition 2024) · Tauri v2 · Svelte 5 + TypeScript + Tailwind v4 ·
 FFmpeg/FFprobe as sidecars.
 
+## App preview
+
+![RustCut 0.1.1 on Windows 11: marking In and Out, naming three clips in the Clip Queue and exporting them losslessly](docs/preview.gif)
+
+Keys in the preview: <kbd>Space</kbd> play or pause, <kbd>I</kbd> and <kbd>O</kbd> mark In and Out,
+<kbd>L</kbd> jump 5 s ahead, <kbd>Enter</kbd> add the clip, <kbd>N</kbd> name it, and
+<kbd>Ctrl</kbd>+<kbd>E</kbd> then <kbd>Enter</kbd> export every clip. The footage is the creditless
+opening of *That Time I Got Reincarnated as a Slime* season 2, © its rights holders.
+
 ## Install (Windows 10/11 x64)
 
 In PowerShell:
