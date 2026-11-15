@@ -1,23 +1,51 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128.png" width="96" height="96" alt="RustCut logo">
+
 # RustCut
 
-Non-destructive batch video clipper: play a long recording, mark In/Out as often
-as you like, name each clip in the Clip Queue, and export every clip as its own
-file in one action — losslessly at disk speed, or frame-accurately and
-pre-framed for vertical platforms (9:16 crop or blur).
+**Cut one long video into many clips, in one pass.**
 
-Built from `docs/PRD.md` (v1.3). Architecture and contracts: `docs/ARCHITECTURE.md`.
+A non-destructive batch video clipper: play a long recording, mark In and Out as often as you like,
+name each clip, and export every clip as its own file in one action. Export losslessly at disk
+speed, or frame-accurately and pre-framed 9:16 for Shorts, TikTok and Reels.
 
-Stack: Rust (edition 2024) · Tauri v2 · Svelte 5 + TypeScript + Tailwind v4 ·
-FFmpeg/FFprobe as sidecars.
+[![Latest release](https://img.shields.io/github/v/release/Sxuoi/rustCut?label=release&color=3b82f6)](https://github.com/Sxuoi/rustCut/releases/latest)
+[![Windows 10 | 11](https://img.shields.io/badge/Windows-10_%7C_11-0078D4)](#install)
+[![Rust](https://img.shields.io/badge/Rust-2024_edition-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-bundled-007808?logo=ffmpeg&logoColor=white)](THIRD-PARTY-NOTICES.md)
 
-## App preview
+[Install](#install) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Build from source](#build-from-source) · [Contact](#contact)
 
-![RustCut 0.1.1 on Windows 11: marking In and Out, naming three clips in the Clip Queue and exporting them losslessly](docs/preview.gif)
+<img src="docs/preview.gif" alt="RustCut 0.1.1 on Windows 11: marking In and Out, naming three clips in the Clip Queue and exporting them losslessly">
 
-Keys in the preview: <kbd>Space</kbd> play or pause, <kbd>I</kbd> and <kbd>O</kbd> mark In and Out,
-<kbd>L</kbd> jump 5 s ahead, <kbd>Enter</kbd> add the clip, <kbd>N</kbd> name it, and
-<kbd>Ctrl</kbd>+<kbd>E</kbd> then <kbd>Enter</kbd> export every clip. The footage in these previews is
-the creditless opening of *That Time I Got Reincarnated as a Slime* season 2, © its rights holders.
+<sub>RustCut 0.1.1 on Windows 11. The strip under the app shows each key as it is pressed.</sub>
+
+</div>
+
+## Highlights
+
+- **Lossless or frame-accurate.** Lossless export copies the streams, bit-identical and at disk
+  speed, starting at the keyframe at or before In. Frame-Accurate re-encodes from the exact frame.
+- **Vertical 9:16 in one step.** Crop through a 9:16 window you place per clip, or keep the whole frame
+  over a blurred background, at 1080x1920. Editable presets flag clips that are too long for
+  YouTube Shorts (3:00), TikTok (10:00) or Instagram Reels (3:00).
+- **Keyboard first.** Every action has a shortcut, and <kbd>?</kbd> shows them all. See the
+  [full list](#keyboard-shortcuts).
+- **A batch export you can trust.** Pre-flight checks before anything starts, a hardware encoder when
+  one is available, up to four parallel jobs, file-name templates, and a readable reason plus Retry
+  for any clip that fails.
+- **Nothing gets lost.** The project auto-saves next to the video, clip edits can be undone, and a
+  crash or force-quit mid-export leaves no stray FFmpeg processes behind.
+- **Timestamps in and out.** Export the clip list as YouTube chapters, CSV, a CMX3600 EDL or FCPXML,
+  or paste timestamps to create clips.
+- **Opens what you record.** MP4, MKV, MOV, WebM and FLV, including variable-frame-rate, HDR and AV1
+  sources.
+- **Scriptable.** An [MCP server](#automation-mcp) lets AI agents cut clips with the same engine.
+
+## Features
 
 ### Vertical 9:16, framed per clip
 
@@ -57,9 +85,9 @@ them into clips.
 Step frame by frame with <kbd>,</kbd> and <kbd>.</kbd>, change speed with <kbd>Shift</kbd>+<kbd>,</kbd>
 and <kbd>Shift</kbd>+<kbd>.</kbd>, and press <kbd>?</kbd> for every shortcut.
 
-## Install (Windows 10/11 x64)
+## Install
 
-In PowerShell:
+On Windows 10 or 11 (x64), run this in PowerShell:
 
 ```powershell
 irm https://github.com/Sxuoi/rustcut/releases/latest/download/install.ps1 | iex
@@ -92,14 +120,86 @@ The installer includes FFmpeg's `ffmpeg.exe` and `ffprobe.exe`, which are licens
 version 3. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) has their license and where to get the
 source.
 
-## Prerequisites
+## Keyboard shortcuts
+
+Press <kbd>?</kbd> in the app to see this list. On macOS, use <kbd>Cmd</kbd> wherever this list says
+<kbd>Ctrl</kbd>. Punctuation keys follow their physical position on any keyboard layout.
+
+### Playback
+
+| Keys | Action |
+| :--- | :--- |
+| <kbd>Space</kbd> or <kbd>K</kbd> | Play / pause |
+| <kbd>J</kbd> / <kbd>L</kbd> | Seek back / forward 5 s |
+| <kbd>←</kbd> / <kbd>→</kbd> | Seek back / forward 1 s |
+| <kbd>,</kbd> / <kbd>.</kbd> | Previous / next frame (pauses) |
+| <kbd>Shift</kbd>+<kbd>,</kbd> / <kbd>Shift</kbd>+<kbd>.</kbd> | Slower / faster (0.5× to 3×) |
+
+### Marking
+
+| Keys | Action |
+| :--- | :--- |
+| <kbd>I</kbd> or <kbd>[</kbd> | Set In at the playhead |
+| <kbd>O</kbd> or <kbd>]</kbd> | Set Out at the playhead |
+| <kbd>Enter</kbd> or <kbd>A</kbd> | Add the pending range as a clip (Out = playhead if not set) |
+| <kbd>Esc</kbd> | Clear marks, leave a text field, or close a dialog |
+| <kbd>Shift</kbd>+<kbd>I</kbd> / <kbd>Shift</kbd>+<kbd>O</kbd> | Go to the pending (or selected clip's) In / Out |
+| <kbd>Alt</kbd>+<kbd>I</kbd> / <kbd>Alt</kbd>+<kbd>O</kbd> | Set the selected clip's In / Out to the playhead |
+
+### Clip queue
+
+| Keys | Action |
+| :--- | :--- |
+| <kbd>N</kbd> | Rename the selected (or latest) clip |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Select the previous / next clip and go to its In |
+| <kbd>P</kbd> | Loop the selected clip (toggle) |
+| <kbd>Delete</kbd> or <kbd>Backspace</kbd> | Delete the selected clips (undoable) |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> | Undo |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd> | Redo |
+
+### Project
+
+| Keys | Action |
+| :--- | :--- |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | Open the Export dialog |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save now (auto-save is always on) |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Open a video or project |
+
+### Vertical crop
+
+These work with the Vertical Crop 9:16 preset.
+
+| Keys | Action |
+| :--- | :--- |
+| <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd> | Nudge the crop left / right (0.05) |
+| <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>→</kbd> | Nudge the crop left / right (0.25) |
+
+### Timeline and text fields
+
+| Keys | Action |
+| :--- | :--- |
+| <kbd>+</kbd> / <kbd>-</kbd> | Zoom the detail timeline in / out (when it has focus) |
+| <kbd>Shift</kbd> while dragging a clip edge | Snap to the playhead, a keyframe or another clip's edge |
+| <kbd>Esc</kbd> while dragging a clip edge | Cancel the trim |
+| <kbd>Enter</kbd> / <kbd>Esc</kbd> in a rename field | Commit / cancel the rename (other shortcuts pause while you type) |
+| <kbd>?</kbd> | Show the keyboard shortcuts |
+
+## Build from source
+
+Built from [`docs/PRD.md`](docs/PRD.md) (v1.3). Architecture and contracts:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Stack: Rust (edition 2024) · Tauri v2 · Svelte 5 + TypeScript + Tailwind v4 · FFmpeg/FFprobe as
+sidecars.
+
+### Prerequisites
 
 * Rust stable (≥ 1.89) with the MSVC toolchain on Windows (Visual Studio C++ Build Tools)
 * Node.js ≥ 20 and npm
 * FFmpeg ≥ 6.1 with libx264 (and `zscale` for HDR tone-mapping), e.g. `winget install Gyan.FFmpeg`
 * Windows: WebView2 runtime (preinstalled on Windows 11)
 
-## Setup
+### Setup
 
 ```bash
 npm install
@@ -107,7 +207,7 @@ npm run sidecars      # copies ffmpeg/ffprobe into src-tauri/binaries/
 npm run bindings      # regenerates src/lib/bindings from rustcut-model
 ```
 
-## Run
+### Run
 
 ```bash
 npm run tauri dev     # desktop app with hot reload
@@ -115,7 +215,7 @@ npm run dev           # UI only, in a browser, against the in-memory mock backen
 npm run tauri build   # installers in target/release/bundle/
 ```
 
-## Test
+### Test
 
 ```bash
 cargo test            # engine crates (FFmpeg-based tests generate fixtures into .fixtures/)
@@ -123,7 +223,7 @@ npm test              # UI unit tests (vitest)
 npm run check         # svelte-check / TypeScript
 ```
 
-## Release (Windows)
+### Release (Windows)
 
 ```bash
 npm run release:windows
@@ -143,3 +243,21 @@ release's files by these names.
 `crates/rustcut-mcp` is an MCP server that lets AI agents clip videos with RustCut's engine, headlessly. It
 reads and writes the same project files as the desktop app, so clips an agent adds show up when you open the
 video in RustCut. See [crates/rustcut-mcp/README.md](crates/rustcut-mcp/README.md).
+
+## Contact
+
+Made by Sxuoi. Questions, ideas or clips you made with RustCut are welcome.
+
+[![Instagram](https://img.shields.io/badge/Instagram-%40pamungkasjibagas-E4405F?logo=instagram&logoColor=white)](https://www.instagram.com/pamungkasjibagas/)
+![Discord: @sxuoi](https://img.shields.io/badge/Discord-%40sxuoi-5865F2?logo=discord&logoColor=white)
+
+- Instagram: [@pamungkasjibagas](https://www.instagram.com/pamungkasjibagas/)
+- Discord: **@sxuoi**
+- Bugs and feature requests: [GitHub issues](https://github.com/Sxuoi/rustCut/issues)
+
+## Credits
+
+- FFmpeg and FFprobe ship with the app under GPL version 3; see
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- The footage in the previews is the creditless opening of *That Time I Got Reincarnated as a Slime*
+  season 2, © its rights holders.
