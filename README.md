@@ -16,8 +16,46 @@ FFmpeg/FFprobe as sidecars.
 
 Keys in the preview: <kbd>Space</kbd> play or pause, <kbd>I</kbd> and <kbd>O</kbd> mark In and Out,
 <kbd>L</kbd> jump 5 s ahead, <kbd>Enter</kbd> add the clip, <kbd>N</kbd> name it, and
-<kbd>Ctrl</kbd>+<kbd>E</kbd> then <kbd>Enter</kbd> export every clip. The footage is the creditless
-opening of *That Time I Got Reincarnated as a Slime* season 2, © its rights holders.
+<kbd>Ctrl</kbd>+<kbd>E</kbd> then <kbd>Enter</kbd> export every clip. The footage in these previews is
+the creditless opening of *That Time I Got Reincarnated as a Slime* season 2, © its rights holders.
+
+### Vertical 9:16, framed per clip
+
+![Choosing Vertical Crop 9:16, dragging the 9:16 window onto the subject, previewing 9:16 only, exporting, and the 1080x1920 crop and blur outputs side by side](docs/feature-vertical.gif)
+
+Choose **Vertical Crop 9:16** and a 9:16 window appears over the video. Drag it, or press
+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd>, to frame each clip, and tick **9:16 only** to
+see the result. **Vertical Blur 9:16** keeps the whole frame over a blurred background instead. Both
+export 1080x1920 files.
+
+### Trim, loop and retime
+
+![Dragging a clip's In and Out edges on the timeline, looping it with P, and moving its Out point with Alt+O](docs/feature-timeline.gif)
+
+Drag a clip's edges on the timeline (hold <kbd>Shift</kbd> to snap), press <kbd>P</kbd> to loop it, and
+press <kbd>Alt</kbd>+<kbd>I</kbd> or <kbd>Alt</kbd>+<kbd>O</kbd> to move its In or Out to the playhead.
+Every edit can be undone.
+
+### Organize the Clip Queue
+
+![Tagging two clips, searching by tag, sorting, leaving a clip out of the export, and undoing a delete](docs/feature-queue.gif)
+
+Tag clips, search by name, tag, #number or time, sort the queue, untick the clips you don't want to
+export, and undo anything you deleted.
+
+### Timestamps in and out
+
+![Showing the clip list as YouTube chapters, CSV, CMX3600 EDL and FCPXML, then pasting two timestamp lines to import them as clips](docs/feature-timestamps.gif)
+
+Export the clip list as YouTube chapters, CSV, a CMX3600 EDL or FCPXML, or paste timestamps to turn
+them into clips.
+
+### Built for the keyboard
+
+![Stepping frame by frame, raising the playback speed to 2x, and opening the keyboard shortcut sheet](docs/feature-keys.gif)
+
+Step frame by frame with <kbd>,</kbd> and <kbd>.</kbd>, change speed with <kbd>Shift</kbd>+<kbd>,</kbd>
+and <kbd>Shift</kbd>+<kbd>.</kbd>, and press <kbd>?</kbd> for every shortcut.
 
 ## Install (Windows 10/11 x64)
 
