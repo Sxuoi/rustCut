@@ -1,7 +1,7 @@
 {
   "name": "rustcut",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "RustCut: non-destructive batch video clipper (Rust + Tauri v2 + FFmpeg)",
   "type": "module",
   "scripts": {
