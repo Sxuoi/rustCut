@@ -16,8 +16,9 @@ speed, or frame-accurately and pre-framed 9:16 for Shorts, TikTok and Reels.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-bundled-007808?logo=ffmpeg&logoColor=white)](THIRD-PARTY-NOTICES.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-[Install](#install) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Build from source](#build-from-source) · [Contact](#contact)
+[Install](#install) · [Features](#features) · [Keyboard shortcuts](#keyboard-shortcuts) · [Build from source](#build-from-source) · [Contact](#contact) · [License](#license)
 
 <img src="docs/preview.gif" alt="RustCut 0.1.1 on Windows 11: marking In and Out, naming three clips in the Clip Queue and exporting them losslessly">
 
@@ -255,9 +256,11 @@ Made by Sxuoi. Questions, ideas or clips you made with RustCut are welcome.
 - Discord: **@sxuoi**
 - Bugs and feature requests: [GitHub issues](https://github.com/Sxuoi/rustCut/issues)
 
-## Credits
+## License
 
-- FFmpeg and FFprobe ship with the app under GPL version 3; see
-  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-- The footage in the previews is the creditless opening of *That Time I Got Reincarnated as a Slime*
-  season 2, © its rights holders.
+RustCut's source code is released under the [MIT License](LICENSE). Two things are not covered by it:
+
+- FFmpeg and FFprobe are separate programs that ship with the Windows installer under GPL version 3;
+  see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- The footage in the preview GIFs is the creditless opening of *That Time I Got Reincarnated as a
+  Slime* season 2, © its rights holders.

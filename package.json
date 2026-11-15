@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "description": "RustCut: non-destructive batch video clipper (Rust + Tauri v2 + FFmpeg)",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

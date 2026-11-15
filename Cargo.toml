@@ -32,7 +32,7 @@ default-members = [
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
-license = "LicenseRef-Proprietary"
+license = "MIT"
 publish = false
 
 [workspace.dependencies]
