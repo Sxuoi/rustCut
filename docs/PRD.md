@@ -3,7 +3,7 @@
 **Category:** Desktop Video Utility / Non-Destructive Batch Video Clipper  
 **Core Tech Stack:** Rust (core), Tauri v2 (desktop shell), FFmpeg & FFprobe (media engine, bundled as sidecars)  
 **Target Platforms:** Windows, macOS, Linux (minimum versions in §8.6)  
-**Document Version:** 1.4.0 · **Status:** Draft for review · **Last updated:** 2026-11-16  
+**Document Version:** 1.4.0 · **Status:** Draft for review · **Last updated:** 2026-11-17  
 **Owner:** TBD (Product) · **Reviewers:** Engineering lead, Design lead
 
 ---
@@ -14,13 +14,14 @@
 | :--- | :--- | :--- |
 | 1.2.0 | — | 16:9 working canvas, adjustable crop position, blurred background. |
 | 1.3.0 | 2026-11-13 | Consistency pass, decisions on open behaviours, FFmpeg commands verified, playback-compatibility and data-safety requirements, new sections (goals, metrics, acceptance criteria, test media, risks, open questions). |
-| 1.4.0 | 2026-11-16 | Square framing (FRM-09): *Square on Blur 9:16* and *Square Blur 1:1*; the blur presets preview their output in the player. |
+| 1.4.0 | 2026-11-17 | Square framing (FRM-09): *Square on Blur 9:16* and *Square Blur 1:1*; the blur presets preview their output in the player; Vertical Blur stacks its background bands instead of overlaying the frame. |
 
 ### What changed in 1.4.0
 1. **Two square presets (FRM-09).** *Square on Blur 9:16* puts a 1:1 window of the frame, positioned per clip like the 9:16 window, in the middle of a 1080×1920 output over a blurred copy of the same window. *Square Blur 1:1* writes a 1080×1080 file with the whole frame over a blurred background (chain E on a square canvas). Chains G and H (§7.6), square window vectors (§7.7).
-2. **One layout for preview and export.** `frame_layout` (Rust, over IPC) returns the output size, the sharp window, where it lands and the blurred background's source region; the player and chains D, G and H use it. Chain E keeps its runtime expressions; the layout reproduces what they resolve to, both where the frame lands and which region its blurred background samples (checked against FFmpeg 9.0.2, the background bit-exactly).
+2. **One layout for preview and export.** `frame_layout` (Rust, over IPC) returns the output size, the sharp window, where it lands and the blurred background's source region; the player and chains D, E, G and H use it.
 3. **The blur presets preview their output (FRM-04).** The *9:16 only* toggle (*1:1 only* for Square Blur) shows the whole output frame: the window at its place over a background drawn from the player's own `<video>` into a small canvas and blurred with CSS. No second video element (playback memory, §8.1).
 4. **Tiny *Native* outputs blur within FFmpeg's limits.** `boxblur=10:2` needs a background of at least 44 px; smaller ones (sources under about 176 px at *Native*) now get the largest radii FFmpeg accepts. Chain E used to fail there; every other output keeps `boxblur=10:2`.
+5. **Vertical Blur is built like the square chains (§7.6 E).** It crops the background's rectangle before blurring it and stacks the background's bands above and below the frame with `vstack`, instead of laying the frame over a whole blurred copy with `overlay`. The frame keeps its size, place and scaling, pixel for pixel; the background samples the same region to within a few source pixels (one at 1080p). The filters take about a fifth less time; an AMF export ran 6–9% faster than with v1.3's chain in the same FFmpeg runs.
 
 ### What changed in 1.3.0
 1. **Contradictions resolved.** Auto-save and crash recovery were P0 (§4.5 of v1.2) but scheduled for Phase 2; naming templates were P0 but "custom templates" were Phase 2; the journey's export choice (*Fast Lossless or Vertical Auto-Crop*) didn't match the two modes in §4.4; `J`/`L` both seeked 5 s *and* "increased playback speed"; `{clip_name}` vs `{name}`; `crop_x_offset` existed per clip *and* in export settings; Out < In was "swap **or** reject"; the example source had three different names. Each now has one answer.
@@ -624,10 +625,11 @@ ffmpeg -hide_banner -nostdin -y \
 - When the source exceeds the frame-rate cap, `fps=60` is inserted before `scale`. *Native* resolution drops the `scale` step (→ 608×1080 here). HDR sources prepend chain F.
 
 **E. Vertical Blur 9:16 → 1080×1920**
+Rust fits the whole frame inside the output and picks the background's source rectangle (`frame_layout`): 1920×1080 → the frame at 1080×608, y = 656; the background is the frame's centre 608×1080 (x = 656), cropped, blurred at quarter size, scaled up and cut into the 656-row bands above and below the frame; `vstack` joins band, frame, band.
 ```bash
 ffmpeg -hide_banner -nostdin -y \
   -ss 920.120 -to 955.800 -i "livestream_2026_10_21.mp4" \
-  -filter_complex "[0:v]split=2[bg][fg];[bg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=10:2,scale=1080:1920,setsar=1[bgv];[fg]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]" \
+  -filter_complex "[0:v]split=2[bg][fg];[bg]crop=608:1080:656:0,scale=270:480,boxblur=10:2,scale=1080:1920,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:656:0:0[top];[bg2]crop=1080:656:0:1264[bottom];[fg]scale=1080:608,setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]" \
   -map "[vout]" -map "0:a:0?" \
   -c:v libx264 -preset fast -crf 20 -maxrate 16M -bufsize 32M -fps_mode passthrough \
   -c:a aac -b:a 192k -ac 2 \
@@ -635,7 +637,11 @@ ffmpeg -hide_banner -nostdin -y \
   -progress pipe:1 -nostats \
   -f mp4 "02_Jump_Scare_Reaction_vblur.mp4.part"
 ```
-- Background: cover-scale to quarter resolution (270×480), blur, scale up. Foreground: fit inside 1080×1920, centred.
+- Foreground: sized as `scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2` sizes it and placed where `overlay=(W-w)/2:(H-h)/2` puts it on a 4:2:0 picture, v1.3's runtime expressions (checked against FFmpeg 9.0.2 for 12 frame sizes × 3 output sizes), with FFmpeg's default bicubic scaler as in v1.3, so the frame's pixels are unchanged. Lanczos, as in G and H, would cost about 6% of an AMF export's speed here.
+- Background: cover-scaled to quarter resolution (270×480), blurred and scaled up as in v1.3, but the rectangle is cropped first (v1.3 scaled the whole frame, then cropped): a third of the pixels to scale. The rectangle is the even one G and H use; it differs from the region v1.3 sampled by 1 px at 1080p and by at most 6 source pixels (about one pixel of the quarter-size blur) in the 270 golden layouts, and the blurred bands by at most 5 luma levels.
+- Taller-than-9:16 sources are fitted by height between bands on the left and right (`hstack=3`). A 9:16 source fills the output and needs no background: `[0:v]setsar=1,format=yuv420p[vout]`, with `scale=720:1280` first for 720×1280. The colour tags are restored after the stack as in G.
+- A source with an alpha channel (ProRes 4444, for example) keeps `overlay` of the whole blurred background, which blends its transparent parts over the blur; a stack would show their stored colour. Chains G and H do the same.
+- Stacking, cropping first and the bicubic frame: about 2.0 ms of decoding and filtering per 1080p frame instead of v1.3's 2.5 ms. In the same direct FFmpeg runs an AMF export reached 4.73–4.84× realtime against 4.35–4.56× with v1.3's chain and 5.30–5.35× for chain D; through the release app 3.98–4.16× (Vertical Crop 4.61–4.73× the same day, docs/PERFORMANCE.md).
 - `-filter_complex` output must be mapped explicitly; `"0:a:0?"` exports video-only when there is no audio.
 
 **F. HDR → SDR tone-map (P1, needs `zscale`).** Insert at the start of the video chain (before `crop` in D and G, before `split` in E and H) and tag the output `-color_primaries bt709 -color_trc bt709 -colorspace bt709`:
@@ -661,14 +667,14 @@ ffmpeg -hide_banner -nostdin -y \
 - Chain F, the SAR normalisation and the frame-rate cap come before the crop: `[0:v]<F>,scale=768:576,setsar=1,crop=576:576:96:0,fps=30,split=2[bg][fg];…`.
 - *Native* keeps the window's pixels: a 720×720 window gives a 720×1280 output with the square at y = 280.
 - Stacking instead of `overlay`: on a 1080×1920 frame `overlay` cost about 1.2 ms per frame on the test laptop (Ryzen 7 8845HS, AMD AMF) and held the AMF export to about 4.1× realtime; with `vstack` the chain filters about as fast as chain D's encode needs (5.1× AMF in a direct FFmpeg run, chain D 5.3×; docs/PERFORMANCE.md).
-- `vstack`/`hstack` build new frames without colour primaries and transfer, so `setparams=color_primaries=…:color_trc=…` puts them back after the stack: BT.709 after chain F, the probed values otherwise (only FFmpeg's own names are passed through).
+- `vstack`/`hstack` build new frames without colour primaries and transfer, so `setparams=color_primaries=…:color_trc=…` puts them back after the stack: BT.709 after chain F, the probed values otherwise (only FFmpeg's own names are passed through). Sources with an alpha channel keep `overlay`, as in E.
 - The background's source rectangle has even values so `crop` uses it exactly; the player draws the same rectangle (AC-18). Tiny *Native* outputs (background under 44 px) get `boxblur` radii FFmpeg accepts, at most (shorter side of the plane − 1) / 2, instead of 10; chain E does the same, so it no longer fails there.
 
 **H. Square Blur 1:1 → 1080×1080**
 ```bash
 -filter_complex "[0:v]split=2[bg][fg];[bg]crop=1080:1080:420:0,scale=270:270,boxblur=10:2,scale=1080:1080,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:236:0:0[top];[bg2]crop=1080:236:0:844[bottom];[fg]scale=1080:608:flags=lanczos,setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]"
 ```
-- Chain E's layout on a square canvas, with literal numbers from `frame_layout`: the frame is fitted exactly as FFmpeg's `force_original_aspect_ratio=decrease:force_divisible_by=2` would size it, and placed at the even position `overlay=(W-w)/2:(H-h)/2` would pick on a 4:2:0 picture (checked against FFmpeg 9.0.2 for 12 frame sizes × 3 output sizes, chain E included); bands and frame are stacked as in G.
+- Chain E on a square canvas: the frame is fitted and placed as in E, but scaled with Lanczos; bands and frame are stacked as in E and G (placement checked against FFmpeg 9.0.2 for 12 frame sizes × 3 output sizes).
 - 720×720: `[fg]scale=720:406:…` between bands of 156 and 158 rows; portrait sources are fitted by height and stacked side by side (1080×1920 → 608×1080 between 236-px bands, `hstack=3`). One band when the frame touches an edge (`vstack=2`), none when it fills the square (a square source: `[0:v]setsar=1,format=yuv420p[vout]` at its own size).
 - Arguments otherwise as G (`-map "[vout]"`, CRF 20, 16M/32M cap, one stereo track); file `02_Jump_Scare_Reaction_square.mp4.part`.
 

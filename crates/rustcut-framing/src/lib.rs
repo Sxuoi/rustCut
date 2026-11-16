@@ -4,8 +4,7 @@
 //! The overlay in the UI calls [`crop_window`] and [`frame_layout`] over IPC
 //! (FRM-04), and the export builds its filters from the same functions, so
 //! preview and output cannot drift apart. Every number placed in a filter
-//! string is a literal integer computed here; chain E keeps the PRD's runtime
-//! expressions, which [`frame_layout`] reproduces (checked against FFmpeg in
+//! string is a literal integer computed here (checked against FFmpeg in
 //! `rustcut-ffmpeg`'s real-FFmpeg tests).
 
 use rustcut_model::{
@@ -150,10 +149,25 @@ pub struct FramingInput {
     pub tonemap_hdr: bool,
     pub output: OutputResolution,
     /// Colour primaries and transfer of the frames entering the graph (BT.709
-    /// after chain F). FFmpeg's stack filters drop both, so chains G and H
+    /// after chain F). FFmpeg's stack filters drop both, so chains E, G and H
     /// set them back with `setparams`; `None` when unknown.
     pub color_primaries: Option<String>,
     pub color_trc: Option<String>,
+    /// The decoded frames carry an alpha channel (for example ProRes 4444).
+    /// The blur chains then lay the window over its background with
+    /// `overlay`, which blends the transparent parts; a stack would show
+    /// their stored colour instead. False after chain F (`format=yuv420p`).
+    pub has_alpha: bool,
+}
+
+/// True for FFmpeg pixel formats with an alpha channel (`yuva444p10le`,
+/// `rgba`, `gbrap10le`, …), and for `pal8`, whose palette can be transparent.
+pub fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
+    const ALPHA: [&str; 12] = [
+        "yuva", "rgba", "bgra", "argb", "abgr", "gbrap", "ya8", "ya16", "ayuv", "vuya", "uyva",
+        "pal8",
+    ];
+    ALPHA.iter().any(|prefix| pix_fmt.starts_with(prefix))
 }
 
 /// `color_primaries` names `setparams` accepts (FFmpeg's own names, as FFprobe prints them).
@@ -218,6 +232,7 @@ impl FramingInput {
             output: settings.output_resolution,
             color_primaries,
             color_trc,
+            has_alpha: !tonemap_hdr && video.pix_fmt.as_deref().is_some_and(pix_fmt_has_alpha),
         }
     }
 
@@ -299,7 +314,8 @@ pub const BLUR_OUTPUT_LABEL: &str = "[vout]";
 /// Size of an `iw`×`ih` picture fitted inside `ow`×`oh`, aspect kept and both
 /// sides even. Rounds exactly like FFmpeg's
 /// `scale=OW:OH:force_original_aspect_ratio=decrease:force_divisible_by=2`
-/// (`ff_scale_adjust_dimensions`), which chain E relies on.
+/// (`ff_scale_adjust_dimensions`), the runtime fit chain E used before it took
+/// literal numbers from here, so its frame keeps that size.
 fn fit_inside(iw: u32, ih: u32, ow: u32, oh: u32) -> (u32, u32) {
     let (iw, ih) = (u64::from(iw.max(1)), u64::from(ih.max(1)));
     let (ow, oh) = (u64::from(ow), u64::from(oh));
@@ -363,53 +379,6 @@ fn boxblur(w: u32, h: u32) -> String {
     }
 }
 
-/// What chain E's runtime `scale=BW:BH:force_original_aspect_ratio=increase,
-/// crop=BW:BH` resolves to on a `dw`×`dh` frame: the cover-scaled size and the
-/// centre crop's position `(sw, sh, cx, cy)`, rounded as FFmpeg 9.0.2 does
-/// (`av_rescale` rounds half up; `crop` rounds its centred position with
-/// `lrint`, ties to even, then aligns it to the 4:2:0 chroma grid).
-pub fn vertical_blur_background_crop(dw: u32, dh: u32, bw: u32, bh: u32) -> (u32, u32, u32, u32) {
-    let (dw, dh, bw, bh) = (
-        u64::from(dw.max(1)),
-        u64::from(dh.max(1)),
-        u64::from(bw),
-        u64::from(bh),
-    );
-    let rescale = |a: u64, b: u64, c: u64| (a * b + c / 2) / c;
-    let sw = rescale(bh, dw, dh).max(bw);
-    let sh = rescale(bw, dh, dw).max(bh);
-    // lrint((in - out) / 2): an odd difference ties to the even neighbour.
-    let centre = |d: u64| {
-        let half = d / 2;
-        let rounded = if d % 2 == 1 && half % 2 == 1 {
-            half + 1
-        } else {
-            half
-        };
-        rounded & !1
-    };
-    let cx = centre(sw - bw);
-    let cy = centre(sh - bh);
-    (sw as u32, sh as u32, cx as u32, cy as u32)
-}
-
-/// The display-frame region chain E's background really samples (see
-/// [`vertical_blur_background_crop`]), to the nearest pixel.
-fn vertical_blur_source(dw: u32, dh: u32, bw: u32, bh: u32) -> CropWindow {
-    let (sw, sh, cx, cy) = vertical_blur_background_crop(dw, dh, bw, bh);
-    let to_display = |v: u32, full: u32, scaled: u32| {
-        ((u64::from(v) * u64::from(full) + u64::from(scaled) / 2) / u64::from(scaled.max(1))) as u32
-    };
-    let x = to_display(cx, dw, sw).min(dw);
-    let y = to_display(cy, dh, sh).min(dh);
-    CropWindow {
-        w: to_display(bw, dw, sw).min(dw - x),
-        h: to_display(bh, dh, sh).min(dh - y),
-        x,
-        y,
-    }
-}
-
 /// The blurred background of an `ow`×`oh` output, taken from `source`.
 fn background(source: CropWindow, ow: u32, oh: u32) -> BlurBackground {
     let (w, h) = (quarter(ow), quarter(oh));
@@ -422,8 +391,9 @@ fn background(source: CropWindow, ow: u32, oh: u32) -> BlurBackground {
 }
 
 /// The full display frame fitted and centred over its own blurred,
-/// cover-scaled copy (chains E and H). The overlay position is rounded down
-/// to even, as FFmpeg's `overlay` does on a 4:2:0 picture.
+/// cover-scaled copy (chains E and H). The position is rounded down to even,
+/// where FFmpeg's `overlay=(W-w)/2:(H-h)/2` put the frame on a 4:2:0 picture
+/// in chain E before it stacked bands.
 fn fit_on_blur(dw: u32, dh: u32, ow: u32, oh: u32) -> FrameLayout {
     let window = CropWindow {
         w: dw,
@@ -450,7 +420,7 @@ fn fit_on_blur(dw: u32, dh: u32, ow: u32, oh: u32) -> FrameLayout {
 
 /// Pixel layout of a framed export for a display frame (FRM-04, FRM-09);
 /// `None` for the original framing. The player preview draws exactly this,
-/// and chains D, G and H are built from it.
+/// and chains D, E, G and H are built from it.
 ///
 /// * Vertical Crop: the 9:16 window fills the output.
 /// * Vertical Blur and Square Blur: the whole frame fitted inside the 9:16 or
@@ -486,12 +456,7 @@ pub fn frame_layout(
         }
         Framing::VerticalBlur => {
             let (ow, oh) = output_dims(output, &crop_window(dw, dh, 0.0));
-            let mut layout = fit_on_blur(dw, dh, ow, oh);
-            // Chain E keeps its runtime cover crop: name the region it really samples.
-            if let Some(b) = layout.blur.as_mut() {
-                b.source = vertical_blur_source(dw, dh, b.w, b.h);
-            }
-            layout
+            fit_on_blur(dw, dh, ow, oh)
         }
         Framing::SquareBlur => {
             let (ow, oh) = output.square_dims().unwrap_or_else(|| {
@@ -526,23 +491,9 @@ pub fn frame_layout(
 
 /// `-filter_complex` for Vertical Blur 9:16 (chain E): the full display frame
 /// fitted inside the output over a quarter-resolution, blurred, cover-scaled
-/// copy of itself.
+/// copy of itself, its bands stacked around the frame (see [`blur_composite`]).
 pub fn vertical_blur_filter(input: &FramingInput) -> String {
-    let win = crop_window(input.display_w, input.display_h, 0.0);
-    let (ow, oh) = output_dims(input.output, &win);
-    // Quarter resolution background, kept even.
-    let bw = quarter(ow);
-    let bh = quarter(oh);
-    let mut head = input.prefix();
-    if let Some(cap) = input.fps_cap {
-        head.push(format!("fps={cap}"));
-    }
-    head.push("split=2[bg][fg]".to_string());
-    format!(
-        "[0:v]{head};[bg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},{blur},scale={ow}:{oh},setsar=1[bgv];[fg]scale={ow}:{oh}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p{BLUR_OUTPUT_LABEL}",
-        head = head.join(","),
-        blur = boxblur(bw, bh),
-    )
+    whole_frame_on_blur_filter(input, Framing::VerticalBlur, Resample::Bicubic)
 }
 
 /// `-filter_complex` for Square on Blur 9:16 (chain G, FRM-09): the 1:1
@@ -564,26 +515,41 @@ pub fn vertical_square_filter(input: &FramingInput, crop_x_offset: f64) -> Strin
     if let Some(cap) = input.fps_cap {
         head.push(format!("fps={cap}"));
     }
-    blur_composite(head, &layout, input.color_params())
+    blur_composite(head, &layout, input, Resample::Lanczos)
 }
 
 /// `-filter_complex` for Square Blur 1:1 (chain H, FRM-09): the full display
 /// frame fitted inside the square output over a blurred, cover-scaled copy of
-/// itself. The layout of chain E on a 1:1 canvas, with literal numbers.
+/// itself. Chain E on a 1:1 canvas, its frame scaled with Lanczos.
 pub fn square_blur_filter(input: &FramingInput) -> String {
-    let layout = frame_layout(
-        Framing::SquareBlur,
-        input.display_w,
-        input.display_h,
-        0.0,
-        input.output,
-    )
-    .expect("Square Blur always has a layout");
+    whole_frame_on_blur_filter(input, Framing::SquareBlur, Resample::Lanczos)
+}
+
+/// Chains E and H: the whole frame is the window, so only the shared prefix
+/// and the frame-rate cap run before the split.
+fn whole_frame_on_blur_filter(
+    input: &FramingInput,
+    framing: Framing,
+    resample: Resample,
+) -> String {
+    let layout = frame_layout(framing, input.display_w, input.display_h, 0.0, input.output)
+        .expect("the blur framings always have a layout");
     let mut head = input.prefix();
     if let Some(cap) = input.fps_cap {
         head.push(format!("fps={cap}"));
     }
-    blur_composite(head, &layout, input.color_params())
+    blur_composite(head, &layout, input, resample)
+}
+
+/// How the sharp window is scaled to its place in the output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Resample {
+    /// FFmpeg's default (bicubic): chain E's frame, scaled as it always was.
+    /// Downscaling a 1080p frame with Lanczos instead cost an AMF export of
+    /// chain E about 6% of its speed (docs/PERFORMANCE.md).
+    Bicubic,
+    /// Lanczos: chains G and H.
+    Lanczos,
 }
 
 /// The parts of the output the sharp window leaves to the background, as
@@ -619,17 +585,25 @@ fn bands(l: &FrameLayout) -> Option<Bands> {
     }
 }
 
-/// The video graph of chains G and H. The sharp branch is the layout's
-/// window scaled to its place (Lanczos, skipped when it already has that
-/// size). The background branch crops the layout's background source,
+/// The video graph of chains E, G and H. The sharp branch is the layout's
+/// window scaled to its place (with `resample`, skipped when it already has
+/// that size). The background branch crops the layout's background source,
 /// blurs it at a quarter of the output size and scales it back up; the
 /// bands of it around the window are cut out and stacked with the window
 /// (`vstack`/`hstack`), which costs far less than an `overlay` on a whole
 /// frame (docs/PERFORMANCE.md). Both branches start at the window's origin:
-/// chain G crops the window before the split, chain H's window is the frame.
+/// chain G crops the window before the split; in chains E and H the window
+/// is the whole frame.
 /// The stack makes new frames without the colour primaries and transfer, so
-/// `color` (a `setparams`) puts the known ones back.
-fn blur_composite(mut head: Vec<String>, layout: &FrameLayout, color: Option<String>) -> String {
+/// a `setparams` puts the known ones back. A source with an alpha channel
+/// keeps the `overlay` of the whole background ([`overlay_composite`]): it
+/// blends the window's transparent parts, which a stack cannot.
+fn blur_composite(
+    mut head: Vec<String>,
+    layout: &FrameLayout,
+    input: &FramingInput,
+    resample: Resample,
+) -> String {
     let blur = layout
         .blur
         .as_ref()
@@ -637,16 +611,21 @@ fn blur_composite(mut head: Vec<String>, layout: &FrameLayout, color: Option<Str
     let (ow, oh, win, fg) = (layout.out_w, layout.out_h, &layout.window, &layout.fg);
     let mut front = Vec::new();
     if (fg.w, fg.h) != (win.w, win.h) {
-        front.push(format!("scale={}:{}:flags=lanczos", fg.w, fg.h));
+        front.push(match resample {
+            Resample::Bicubic => format!("scale={}:{}", fg.w, fg.h),
+            Resample::Lanczos => format!("scale={}:{}:flags=lanczos", fg.w, fg.h),
+        });
     }
     front.push("setsar=1".to_string());
+    let stacked = if input.has_alpha { None } else { bands(layout) };
     let Some(Bands {
         vertical,
         before,
         after,
-    }) = bands(layout)
+    }) = stacked
     else {
-        // Unreachable with today's layouts: overlay the window at its place.
+        // Transparency to blend, or (no current layout) a window that spans
+        // neither side: overlay the window at its place.
         return overlay_composite(head, layout, &front);
     };
     let window_after_first_band = before.is_some();
@@ -695,7 +674,10 @@ fn blur_composite(mut head: Vec<String>, layout: &FrameLayout, color: Option<Str
         [(only, _)] => format!("[fgv]{only}"),
         _ => unreachable!("one or two bands"),
     };
-    let color = color.map(|c| format!(",{c}")).unwrap_or_default();
+    let color = input
+        .color_params()
+        .map(|c| format!(",{c}"))
+        .unwrap_or_default();
     graph.push(format!(
         "{inputs}{}={}{color},format=yuv420p{BLUR_OUTPUT_LABEL}",
         if vertical { "vstack" } else { "hstack" },
@@ -704,7 +686,10 @@ fn blur_composite(mut head: Vec<String>, layout: &FrameLayout, color: Option<Str
     graph.join(";")
 }
 
-/// Fallback of [`blur_composite`]: the whole background, the window overlaid.
+/// The whole background with the window overlaid at its place: for sources
+/// with an alpha channel, whose transparency `overlay` blends over the
+/// background, and as [`blur_composite`]'s fallback. `overlay` passes the
+/// background's colour tags through, so no `setparams` is needed.
 fn overlay_composite(mut head: Vec<String>, layout: &FrameLayout, front: &[String]) -> String {
     let blur = layout
         .blur
@@ -813,6 +798,7 @@ mod tests {
             output: OutputResolution::Full1080x1920,
             color_primaries: None,
             color_trc: None,
+            has_alpha: false,
         }
     }
 
@@ -847,9 +833,34 @@ mod tests {
 
     #[test]
     fn chain_e_matches_prd() {
+        // The frame (1080x608) lands at y = 656 between two 656-row bands of the
+        // background, which is the centre 608x1080 of the frame blurred at 270x480.
         assert_eq!(
             vertical_blur_filter(&input(1920, 1080)),
-            "[0:v]split=2[bg][fg];[bg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=10:2,scale=1080:1920,setsar=1[bgv];[fg]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]"
+            "[0:v]split=2[bg][fg];[bg]crop=608:1080:656:0,scale=270:480,boxblur=10:2,scale=1080:1920,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:656:0:0[top];[bg2]crop=1080:656:0:1264[bottom];[fg]scale=1080:608,setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]"
+        );
+        let mut hd = input(1920, 1080);
+        hd.output = OutputResolution::Hd720x1280;
+        assert_eq!(
+            vertical_blur_filter(&hd),
+            "[0:v]split=2[bg][fg];[bg]crop=608:1080:656:0,scale=180:320,boxblur=10:2,scale=720:1280,setsar=1,split=2[bg1][bg2];[bg1]crop=720:436:0:0[top];[bg2]crop=720:438:0:842[bottom];[fg]scale=720:406,setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]"
+        );
+        // Taller than 9:16: fitted by height, bands left and right.
+        assert_eq!(
+            vertical_blur_filter(&input(1080, 2340)),
+            "[0:v]split=2[bg][fg];[bg]crop=1080:1920:0:210,scale=270:480,boxblur=10:2,scale=1080:1920,setsar=1,split=2[bg1][bg2];[bg1]crop=96:1920:0:0[left];[bg2]crop=98:1920:982:0[right];[fg]scale=886:1920,setsar=1[fgv];[left][fgv][right]hstack=3,format=yuv420p[vout]"
+        );
+        // A 9:16 frame fills the output: nothing left to blur.
+        assert_eq!(
+            vertical_blur_filter(&input(1080, 1920)),
+            "[0:v]setsar=1,format=yuv420p[vout]"
+        );
+        let mut all = input(1920, 1080);
+        all.fps_cap = Some(60);
+        all.tonemap_hdr = true;
+        assert!(
+            vertical_blur_filter(&all)
+                .starts_with(&format!("[0:v]{HDR_TONEMAP_CHAIN},fps=60,split=2[bg][fg];"))
         );
     }
 
@@ -967,21 +978,19 @@ mod tests {
             (1080, 1080, rect(608, 1080, 236, 0))
         );
         assert_eq!(l.blur.unwrap().source, rect(1080, 1080, 0, 420));
-        // Vertical Blur: chain E's runtime numbers, background included
-        // (853x480 cover scale, crop at x = lrint(291.5) = 292, so source x = 657, not 656).
+        // Vertical Blur: the frame where FFmpeg's fit and overlay=(W-w)/2:(H-h)/2
+        // put it; the background is the frame's centre 9:16 rectangle.
         let l = frame_layout(Framing::VerticalBlur, 1920, 1080, 0.0, Full).unwrap();
         assert_eq!(
             (l.out_w, l.out_h, l.fg),
             (1080, 1920, rect(1080, 608, 0, 656))
         );
-        assert_eq!(
-            vertical_blur_background_crop(1920, 1080, 270, 480),
-            (853, 480, 292, 0)
-        );
-        assert_eq!(l.blur.as_ref().unwrap().source, rect(608, 1080, 657, 0));
-        // 1280x720 Native: 320x180 scale, 100x180 crop at x = 110 = 400x720 at 440.
+        let b = l.blur.unwrap();
+        assert_eq!((b.source, b.w, b.h), (rect(608, 1080, 656, 0), 270, 480));
+        // 1280x720 Native: a 406x720 output, background from the centre 406x720.
         let l = frame_layout(Framing::VerticalBlur, 1280, 720, 0.0, Native).unwrap();
-        assert_eq!(l.blur.unwrap().source, rect(400, 720, 440, 0));
+        assert_eq!((l.out_w, l.out_h, l.fg), (406, 720, rect(406, 228, 0, 246)));
+        assert_eq!(l.blur.unwrap().source, rect(406, 720, 436, 0));
         let l = frame_layout(Framing::VerticalBlur, 1920, 1080, 0.0, Native).unwrap();
         assert_eq!(
             (l.out_w, l.out_h, l.fg),
@@ -1050,21 +1059,18 @@ mod tests {
                                     "bg comes from the window {tag}"
                                 );
                                 assert!(b.w.is_multiple_of(2) && b.h.is_multiple_of(2), "{tag}");
-                                // Chains G and H crop this rectangle literally: the output's
+                                // The chains crop this rectangle literally: the output's
                                 // aspect within the 2 px of even rounding, every value even.
-                                // Chain E's is what FFmpeg's runtime cover crop samples.
-                                if f != Framing::VerticalBlur {
-                                    let lhs = f64::from(s.w) * f64::from(l.out_h);
-                                    let rhs = f64::from(s.h) * f64::from(l.out_w);
-                                    assert!(
-                                        (lhs - rhs).abs() <= 2.0 * f64::from(l.out_w.max(l.out_h)),
-                                        "bg aspect {tag}"
-                                    );
-                                    assert!(
-                                        [s.w, s.h, s.x, s.y].iter().all(|v| v.is_multiple_of(2)),
-                                        "bg even {tag}"
-                                    );
-                                }
+                                let lhs = f64::from(s.w) * f64::from(l.out_h);
+                                let rhs = f64::from(s.h) * f64::from(l.out_w);
+                                assert!(
+                                    (lhs - rhs).abs() <= 2.0 * f64::from(l.out_w.max(l.out_h)),
+                                    "bg aspect {tag}"
+                                );
+                                assert!(
+                                    [s.w, s.h, s.x, s.y].iter().all(|v| v.is_multiple_of(2)),
+                                    "bg even {tag}"
+                                );
                                 let (luma, chroma) = blur_radii(b.w, b.h);
                                 assert_eq!(b.radius, luma, "{tag}");
                                 // FFmpeg: radius <= (shorter side of the plane - 1) / 2.
@@ -1111,20 +1117,24 @@ mod tests {
                     "{dw}x{dh} {res:?}"
                 );
                 let e = frame_layout(Framing::VerticalBlur, dw, dh, 0.0, res).unwrap();
-                let b = e.blur.unwrap();
                 let chain = vertical_blur_filter(&x);
+                let g = &e.fg;
+                if (g.w, g.h) == (e.out_w, e.out_h) {
+                    // A 9:16 frame fills the output: no background branch.
+                    assert!(!chain.contains("[bg]"), "{dw}x{dh} {res:?}: {chain}");
+                    continue;
+                }
+                let b = e.blur.unwrap();
+                let s = &b.source;
                 assert!(
                     chain.contains(&format!(
-                        "[bg]scale={0}:{1}:force_original_aspect_ratio=increase,crop={0}:{1},boxblur=10:2,scale={2}:{3},",
-                        b.w, b.h, e.out_w, e.out_h
+                        "[bg]crop={}:{}:{}:{},scale={}:{},boxblur=10:2,scale={}:{},",
+                        s.w, s.h, s.x, s.y, b.w, b.h, e.out_w, e.out_h
                     )),
                     "{dw}x{dh} {res:?}: {chain}"
                 );
                 assert!(
-                    chain.contains(&format!(
-                        "[fg]scale={}:{}:force_original_aspect_ratio=decrease",
-                        e.out_w, e.out_h
-                    )),
+                    chain.contains(&format!("[fg]scale={}:{},setsar=1[fgv]", g.w, g.h)),
                     "{chain}"
                 );
             }
@@ -1212,6 +1222,9 @@ mod tests {
             "vstack=3,setparams=color_primaries=bt709:color_trc=smpte170m,format=yuv420p[vout]"
         ));
         assert!(square_blur_filter(&tagged).contains("vstack=3,setparams=color_primaries=bt709:"));
+        assert!(
+            vertical_blur_filter(&tagged).contains("vstack=3,setparams=color_primaries=bt709:")
+        );
         // Unknown or unexpected names are left out, never passed into the graph.
         tagged.color_primaries = Some("unknown".into());
         tagged.color_trc = Some("bt709,evil=1".into());
@@ -1260,6 +1273,77 @@ mod tests {
     }
 
     #[test]
+    fn alpha_sources_keep_the_overlay() {
+        for fmt in [
+            "yuva444p10le",
+            "yuva420p",
+            "rgba",
+            "bgra",
+            "argb",
+            "gbrap12le",
+            "ya8",
+            "pal8",
+        ] {
+            assert!(pix_fmt_has_alpha(fmt), "{fmt}");
+        }
+        for fmt in [
+            "yuv420p",
+            "yuv444p10le",
+            "nv12",
+            "rgb24",
+            "bgr0",
+            "rgb0",
+            "gbrp10le",
+            "p010le",
+        ] {
+            assert!(!pix_fmt_has_alpha(fmt), "{fmt}");
+        }
+        let mut x = input(1920, 1080);
+        x.has_alpha = true;
+        assert_eq!(
+            vertical_blur_filter(&x),
+            "[0:v]split=2[bg][fg];[bg]crop=608:1080:656:0,scale=270:480,boxblur=10:2,scale=1080:1920,setsar=1[bgv];[fg]scale=1080:608,setsar=1[fgv];[bgv][fgv]overlay=0:656,format=yuv420p[vout]"
+        );
+        for chain in [vertical_square_filter(&x, 0.3), square_blur_filter(&x)] {
+            assert!(
+                chain.contains("[bgv][fgv]overlay=") && !chain.contains("stack"),
+                "{chain}"
+            );
+        }
+        // Even a frame that fills the output shows the blur through its transparent parts.
+        let mut tall = input(1080, 1920);
+        tall.has_alpha = true;
+        assert!(
+            vertical_blur_filter(&tall).ends_with("[bgv][fgv]overlay=0:0,format=yuv420p[vout]")
+        );
+        // From the probe: ProRes 4444 with alpha, unless chain F has flattened it.
+        let video = |pix_fmt: &str, hdr: bool| VideoInfo {
+            codec: "prores".into(),
+            coded_width: 1920,
+            coded_height: 1080,
+            display_width: 1920,
+            display_height: 1080,
+            rotation: 0,
+            sar: "1:1".into(),
+            frame_rate: "25/1".into(),
+            vfr: false,
+            hdr,
+            stream_index: Some(0),
+            pix_fmt: Some(pix_fmt.into()),
+            profile: None,
+            level: None,
+            color_transfer: None,
+            color_primaries: None,
+            bit_depth: Some(10),
+        };
+        let settings = ExportSettings::default();
+        assert!(FramingInput::new(&video("yuva444p10le", false), &settings, true).has_alpha);
+        assert!(!FramingInput::new(&video("yuv422p10le", false), &settings, true).has_alpha);
+        assert!(!FramingInput::new(&video("yuva444p10le", true), &settings, true).has_alpha);
+        assert!(FramingInput::new(&video("yuva444p10le", true), &settings, false).has_alpha);
+    }
+
+    #[test]
     fn tiny_outputs_get_a_blur_ffmpeg_accepts() {
         // FFmpeg needs 2 x radius <= min(plane width, height); chroma planes are half size.
         assert_eq!(blur_radii(270, 480), (10, 10));
@@ -1282,7 +1366,7 @@ mod tests {
         e.output = OutputResolution::Native;
         assert!(
             vertical_blur_filter(&e).contains(
-                "crop=12:22,boxblur=luma_radius=5:luma_power=2:chroma_radius=2:chroma_power=2,scale=50:90,"
+                "crop=50:90:54:0,scale=12:22,boxblur=luma_radius=5:luma_power=2:chroma_radius=2:chroma_power=2,scale=50:90,"
             ),
             "{}",
             vertical_blur_filter(&e)

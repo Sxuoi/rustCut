@@ -13,8 +13,7 @@ use rustcut_ffmpeg::{
     parse_probe_json, probe_args, verify_args,
 };
 use rustcut_framing::{
-    FramingInput, frame_layout, square_blur_filter, vertical_blur_background_crop,
-    vertical_blur_filter, vertical_square_filter,
+    FramingInput, frame_layout, square_blur_filter, vertical_blur_filter, vertical_square_filter,
 };
 use rustcut_model::{
     EncoderChoice, ExportSettings, FrameLayout, Framing, OutputResolution, Preset, SourceInfo,
@@ -866,13 +865,17 @@ fn assert_ramp_matches_layout(name: &str, luma: &[u8], l: &FrameLayout, dw: u32)
     }
 }
 
+/// Chains E, G and H on a luma ramp: the exported frame and background show
+/// the columns `frame_layout` says they do.
 #[test]
-fn g_and_h_square_exports_match_their_layout() {
+fn blur_exports_match_their_layout() {
     let t = need_ffmpeg!();
     let dir = workdir();
     let src = ramp_source(t, dir.path(), 640, 360);
     let (dw, dh) = (src.video.display_width, src.video.display_height);
     for (p_, res, offset) in [
+        (Preset::Vblur, OutputResolution::Full1080x1920, 0.0),
+        (Preset::Vblur, OutputResolution::Native, 0.0),
         (Preset::Vsquare, OutputResolution::Full1080x1920, 0.3),
         (Preset::Vsquare, OutputResolution::Native, 0.3),
         (Preset::Square, OutputResolution::Full1080x1920, 0.0),
@@ -905,10 +908,12 @@ fn g_and_h_square_exports_match_their_layout() {
 
 /// Chains E, G and H with the upscaled background painted black and a white
 /// source: the white rectangle FFmpeg draws must be exactly the layout's
-/// foreground. For chain E this checks that `frame_layout` reproduces
-/// FFmpeg's runtime `force_original_aspect_ratio` and `overlay` rounding; for
-/// G and H that the stacked bands and the window tile the output as intended
-/// (one band, two bands, no band when the window fills the output).
+/// foreground, so the stacked bands and the window tile the output as
+/// intended (one band, two bands, no band when the window fills the output).
+/// For chain E the layout must also match FFmpeg's own fit and centring,
+/// `force_original_aspect_ratio=decrease:force_divisible_by=2` and
+/// `overlay=(W-w)/2:(H-h)/2`, the runtime expressions chain E used before it
+/// stacked bands: the frame lands exactly where it always did.
 #[test]
 fn blur_chains_place_the_foreground_where_the_layout_says() {
     let t = need_ffmpeg!();
@@ -932,6 +937,45 @@ fn blur_chains_place_the_foreground_where_the_layout_says() {
         OutputResolution::Hd720x1280,
         OutputResolution::Native,
     ];
+    // The bright rectangle `graph` draws from a white `dw`x`dh` frame: (x, y, w, h).
+    let bright_rect = |graph: &str, dw: u32, dh: u32, l: &FrameLayout, name: &str| {
+        let out = dir.path().join(format!("place {name}.y4m"));
+        let o = Command::new(&t.ffmpeg)
+            .args([
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg(format!("color=c=white:s={dw}x{dh}:r=1:d=1"))
+            .args(["-filter_complex", graph, "-map", "[vout]", "-frames:v", "1"])
+            .arg(&out)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            o.status.success(),
+            "{graph}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let luma = first_frame_luma(t, &out, l.out_w, l.out_h);
+        let bright = |x: u32, y: u32| luma[(y * l.out_w + x) as usize] > 128;
+        let cols: Vec<u32> = (0..l.out_w)
+            .filter(|x| (0..l.out_h).any(|y| bright(*x, y)))
+            .collect();
+        let rows: Vec<u32> = (0..l.out_h)
+            .filter(|y| (0..l.out_w).any(|x| bright(x, *y)))
+            .collect();
+        (
+            cols[0],
+            rows[0],
+            cols[cols.len() - 1] + 1 - cols[0],
+            rows[rows.len() - 1] + 1 - rows[0],
+        )
+    };
     let mut checked = 0;
     for (dw, dh) in frames {
         for res in resolutions {
@@ -944,6 +988,7 @@ fn blur_chains_place_the_foreground_where_the_layout_says() {
                 output: res,
                 color_primaries: None,
                 color_trc: None,
+                has_alpha: false,
             };
             for (framing, chain) in [
                 (Framing::VerticalBlur, vertical_blur_filter(&input)),
@@ -951,74 +996,141 @@ fn blur_chains_place_the_foreground_where_the_layout_says() {
                 (Framing::SquareBlur, square_blur_filter(&input)),
             ] {
                 let l = frame_layout(framing, dw, dh, 0.3, res).unwrap();
-                // The one plain upscale to the output size is the background's.
+                let want = (l.fg.x, l.fg.y, l.fg.w, l.fg.h);
+                let name = format!("{framing:?} {dw}x{dh} {res:?}");
+                // The background branch ([bg]) ends in the upscale to the output size;
+                // the chains drop it when the window fills the output.
                 let upscale = format!("scale={}:{},setsar=1", l.out_w, l.out_h);
-                // Chains G and H drop the background when the window fills the output;
-                // chain E always keeps its branch.
                 let fills = (l.fg.w, l.fg.h) == (l.out_w, l.out_h);
-                let has_bg = framing == Framing::VerticalBlur || !fills;
-                assert_eq!(
-                    chain.matches(&upscale).count(),
-                    usize::from(has_bg),
-                    "{chain}"
-                );
-                let graph =
-                    chain.replacen(&upscale, &format!("{upscale},lutyuv=y=16:u=128:v=128"), 1);
-                let out = dir
-                    .path()
-                    .join(format!("place {framing:?} {dw}x{dh} {res:?}.y4m"));
-                let o = Command::new(&t.ffmpeg)
-                    .args([
-                        "-hide_banner",
-                        "-nostdin",
-                        "-y",
-                        "-v",
-                        "error",
-                        "-f",
-                        "lavfi",
-                        "-i",
-                    ])
-                    .arg(format!("color=c=white:s={dw}x{dh}:r=1:d=1"))
-                    .args([
-                        "-filter_complex",
-                        &graph,
-                        "-map",
-                        "[vout]",
-                        "-frames:v",
-                        "1",
-                    ])
-                    .arg(&out)
-                    .output()
-                    .expect("spawn ffmpeg");
-                assert!(
-                    o.status.success(),
-                    "{graph}: {}",
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                let luma = first_frame_luma(t, &out, l.out_w, l.out_h);
-                let bright = |x: u32, y: u32| luma[(y * l.out_w + x) as usize] > 128;
-                let cols: Vec<u32> = (0..l.out_w)
-                    .filter(|x| (0..l.out_h).any(|y| bright(*x, y)))
+                let mut parts: Vec<String> = chain.split(';').map(str::to_string).collect();
+                let backgrounds: Vec<usize> = (0..parts.len())
+                    .filter(|i| parts[*i].starts_with("[bg]"))
                     .collect();
-                let rows: Vec<u32> = (0..l.out_h)
-                    .filter(|y| (0..l.out_w).any(|x| bright(x, *y)))
-                    .collect();
-                let found = (
-                    cols[0],
-                    rows[0],
-                    cols[cols.len() - 1] + 1 - cols[0],
-                    rows[rows.len() - 1] + 1 - rows[0],
-                );
+                assert_eq!(backgrounds.len(), usize::from(!fills), "{chain}");
+                for i in backgrounds {
+                    assert_eq!(parts[i].matches(&upscale).count(), 1, "{chain}");
+                    parts[i] = parts[i].replacen(
+                        &upscale,
+                        &format!("{upscale},lutyuv=y=16:u=128:v=128"),
+                        1,
+                    );
+                }
+                let graph = parts.join(";");
                 assert_eq!(
-                    found,
-                    (l.fg.x, l.fg.y, l.fg.w, l.fg.h),
-                    "{framing:?} {dw}x{dh} {res:?}: FFmpeg's foreground (x, y, w, h)"
+                    bright_rect(&graph, dw, dh, &l, &name),
+                    want,
+                    "{name}: FFmpeg's foreground (x, y, w, h)"
                 );
+                if framing == Framing::VerticalBlur {
+                    let reference = format!(
+                        "[0:v]split=2[bg][fg];[bg]scale={ow}:{oh},setsar=1,lutyuv=y=16:u=128:v=128[bgv];[fg]scale={ow}:{oh}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]",
+                        ow = l.out_w,
+                        oh = l.out_h
+                    );
+                    assert_eq!(
+                        bright_rect(&reference, dw, dh, &l, &format!("{name} reference")),
+                        want,
+                        "{name}: where FFmpeg's own fit and overlay put the frame"
+                    );
+                }
                 checked += 1;
             }
         }
     }
     assert_eq!(checked, frames.len() * resolutions.len() * 3);
+}
+
+/// Sources with an alpha channel (ProRes 4444 and the like): the blur chains
+/// lay the window over its background with `overlay`, which blends it. A fully
+/// transparent white frame over a background painted black comes out black,
+/// the same frame opaque comes out white, and the stacked chain (no alpha
+/// handling) would show the transparent pixels' stored white.
+#[test]
+fn alpha_sources_blend_over_the_background() {
+    let t = need_ffmpeg!();
+    let dir = workdir();
+    let (dw, dh) = (1280, 720);
+    let mut input = FramingInput {
+        display_w: dw,
+        display_h: dh,
+        normalize_sar: false,
+        fps_cap: None,
+        tonemap_hdr: false,
+        output: OutputResolution::Hd720x1280,
+        color_primaries: None,
+        color_trc: None,
+        has_alpha: true,
+    };
+    // Luma at the centre of the foreground for a white source with `alpha`.
+    let centre = |graph: &str, l: &FrameLayout, alpha: &str, name: &str| -> u8 {
+        let black_bg = graph.replacen(
+            &format!("scale={}:{},setsar=1", l.out_w, l.out_h),
+            &format!(
+                "scale={}:{},setsar=1,lutyuv=y=16:u=128:v=128",
+                l.out_w, l.out_h
+            ),
+            1,
+        );
+        let out = dir.path().join(format!("alpha {name} {alpha}.y4m"));
+        let o = Command::new(&t.ffmpeg)
+            .args([
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg(format!(
+                "color=c=white@{alpha}:s={dw}x{dh}:r=1:d=1,format=yuva420p"
+            ))
+            .args([
+                "-filter_complex",
+                &black_bg,
+                "-map",
+                "[vout]",
+                "-frames:v",
+                "1",
+            ])
+            .arg(&out)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            o.status.success(),
+            "{black_bg}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let luma = first_frame_luma(t, &out, l.out_w, l.out_h);
+        luma[((l.fg.y + l.fg.h / 2) * l.out_w + l.fg.x + l.fg.w / 2) as usize]
+    };
+    for (framing, chain) in [
+        (Framing::VerticalBlur, vertical_blur_filter(&input)),
+        (Framing::VerticalSquare, vertical_square_filter(&input, 0.3)),
+        (Framing::SquareBlur, square_blur_filter(&input)),
+    ] {
+        let l = frame_layout(framing, dw, dh, 0.3, input.output).unwrap();
+        assert!(
+            chain.contains("overlay=") && !chain.contains("stack"),
+            "{chain}"
+        );
+        let name = format!("{framing:?}");
+        let clear = centre(&chain, &l, "0.0", &name);
+        assert!(
+            clear < 40,
+            "{name}: transparent window shows the background ({clear})"
+        );
+        let opaque = centre(&chain, &l, "1.0", &name);
+        assert!(
+            opaque > 200,
+            "{name}: opaque window shows itself ({opaque})"
+        );
+    }
+    input.has_alpha = false;
+    let l = frame_layout(Framing::VerticalBlur, dw, dh, 0.0, input.output).unwrap();
+    let stacked = centre(&vertical_blur_filter(&input), &l, "0.0", "stacked");
+    assert!(stacked > 200, "a stack shows the stored colour ({stacked})");
 }
 
 /// Native outputs of tiny sources make backgrounds too small for
@@ -1056,76 +1168,6 @@ fn tiny_native_outputs_export() {
                 (p.source.video.coded_width, p.source.video.coded_height),
                 (l.out_w, l.out_h),
                 "{w}x{h} {p_:?}"
-            );
-        }
-    }
-}
-
-/// Chain E keeps `scale=BW:BH:force_original_aspect_ratio=increase,crop=BW:BH`.
-/// `vertical_blur_background_crop` must name exactly what FFmpeg resolves it
-/// to, so the preview samples the same region: the runtime form and the
-/// literal one produce bit-identical frames.
-#[test]
-fn chain_e_cover_crop_resolves_as_the_layout_says() {
-    let t = need_ffmpeg!();
-    let frames = [
-        (1920, 1080),
-        (1280, 720),
-        (1440, 1080),
-        (2560, 1080),
-        (1080, 1920),
-        (1080, 2340),
-        (768, 576),
-        (854, 480),
-        (1000, 700),
-        (160, 90),
-    ];
-    let md5 = |dw: u32, dh: u32, vf: &str| -> String {
-        let o = Command::new(&t.ffmpeg)
-            .args([
-                "-hide_banner",
-                "-nostdin",
-                "-v",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-            ])
-            .arg(format!("testsrc2=size={dw}x{dh}:rate=10:duration=0.3"))
-            .args([
-                "-vf",
-                &format!("format=yuv420p,{vf}"),
-                "-f",
-                "framemd5",
-                "-",
-            ])
-            .output()
-            .expect("spawn ffmpeg");
-        assert!(
-            o.status.success(),
-            "{vf}: {}",
-            String::from_utf8_lossy(&o.stderr)
-        );
-        String::from_utf8_lossy(&o.stdout).into_owned()
-    };
-    for (dw, dh) in frames {
-        for res in [
-            OutputResolution::Full1080x1920,
-            OutputResolution::Hd720x1280,
-            OutputResolution::Native,
-        ] {
-            let l = frame_layout(Framing::VerticalBlur, dw, dh, 0.0, res).unwrap();
-            let b = l.blur.expect("background");
-            let (sw, sh, cx, cy) = vertical_blur_background_crop(dw, dh, b.w, b.h);
-            let runtime = format!(
-                "scale={0}:{1}:force_original_aspect_ratio=increase,crop={0}:{1}",
-                b.w, b.h
-            );
-            let literal = format!("scale={sw}:{sh},crop={}:{}:{cx}:{cy}", b.w, b.h);
-            assert_eq!(
-                md5(dw, dh, &runtime),
-                md5(dw, dh, &literal),
-                "{dw}x{dh} {res:?}: {literal}"
             );
         }
     }

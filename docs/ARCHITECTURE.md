@@ -97,7 +97,7 @@ All commands: `#[tauri::command(rename_all = "snake_case")]`, return
 | `set_view_state` | `view: ViewState` | `()` (saved, not undoable, no patch) |
 | `save_now` | – | `SaveState` |
 | `crop_window` | `display_width, display_height: u32, offset: f64` | `CropWindow` (FRM-04) |
-| `frame_layout` | `framing: Framing, display_width, display_height: u32, offset: f64, output_resolution: OutputResolution` | `Option<FrameLayout>` (`None` for the original framing) (FRM-04, FRM-09): output size, sharp window, its place in the output, blurred background source; the player preview and chains D, G and H use it |
+| `frame_layout` | `framing: Framing, display_width, display_height: u32, offset: f64, output_resolution: OutputResolution` | `Option<FrameLayout>` (`None` for the original framing) (FRM-04, FRM-09): output size, sharp window, its place in the output, blurred background source; the player preview and chains D, E, G and H use it |
 | `preview_export` | `clip_ids, settings` | `PreflightReport` (names, checks, estimate) |
 | `start_export` | `clip_ids, settings` | `BatchInfo` (fails with `Busy` if running, `InvalidInput` if pre-flight has errors) |
 | `cancel_export` | `clip_id: Option<Uuid>` | `()` (None = cancel all) |

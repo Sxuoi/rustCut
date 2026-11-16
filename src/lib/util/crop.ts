@@ -85,7 +85,7 @@ const NINE_SIXTEEN: Record<OutputResolution, [number, number] | null> = {
   native: null,
 };
 
-/** Fit like FFmpeg's force_original_aspect_ratio=decrease:force_divisible_by=2 (chain E). */
+/** Fit like FFmpeg's force_original_aspect_ratio=decrease:force_divisible_by=2 (port of `fit_inside`). */
 function fitInside(iw: number, ih: number, ow: number, oh: number): [number, number] {
   const w0 = Math.max(1, iw);
   const h0 = Math.max(1, ih);
@@ -119,34 +119,6 @@ const quarter = (v: number) => Math.max(2, Math.floor(v / 4) & ~1);
 export function blurRadii(w: number, h: number): [number, number] {
   const max = (side: number) => Math.floor(Math.max(0, side - 1) / 2);
   return [Math.min(10, max(Math.min(w, h))), Math.min(10, max(Math.min(Math.ceil(w / 2), Math.ceil(h / 2))))];
-}
-
-/**
- * What chain E's runtime `scale=BW:BH:force_original_aspect_ratio=increase,crop=BW:BH`
- * resolves to: `[sw, sh, cx, cy]` (port of `vertical_blur_background_crop`).
- */
-function verticalBlurBackgroundCrop(dw: number, dh: number, bw: number, bh: number): [number, number, number, number] {
-  const w0 = Math.max(1, dw);
-  const h0 = Math.max(1, dh);
-  const rescale = (a: number, b: number, c: number) => Math.floor((a * b + Math.floor(c / 2)) / c);
-  const sw = Math.max(rescale(bh, w0, h0), bw);
-  const sh = Math.max(rescale(bw, h0, w0), bh);
-  // lrint((in - out) / 2) ties to even, then the 4:2:0 alignment.
-  const centre = (d: number) => {
-    const half = Math.floor(d / 2);
-    return (d % 2 === 1 && half % 2 === 1 ? half + 1 : half) & ~1;
-  };
-  return [sw, sh, centre(sw - bw), centre(sh - bh)];
-}
-
-/** The display-frame region chain E's background samples, to the nearest pixel. */
-function verticalBlurSource(dw: number, dh: number, bw: number, bh: number): CropRect {
-  const [sw, sh, cx, cy] = verticalBlurBackgroundCrop(dw, dh, bw, bh);
-  const toDisplay = (v: number, full: number, scaled: number) =>
-    Math.floor((v * full + Math.floor(scaled / 2)) / Math.max(1, scaled));
-  const x = Math.min(toDisplay(cx, dw, sw), dw);
-  const y = Math.min(toDisplay(cy, dh, sh), dh);
-  return { w: Math.min(toDisplay(bw, dw, sw), dw - x), h: Math.min(toDisplay(bh, dh, sh), dh - y), x, y };
 }
 
 function background(source: CropRect, ow: number, oh: number) {
@@ -191,10 +163,7 @@ export function frameLayout(
     case "vertical_blur": {
       const win = cropWindow(dw, dh, 0);
       const [ow, oh] = fixed ?? [win.w, win.h];
-      const layout = fitOnBlur(dw, dh, ow, oh);
-      // Chain E keeps its runtime cover crop: name the region it really samples.
-      if (layout.blur) layout.blur.source = verticalBlurSource(dw, dh, layout.blur.w, layout.blur.h);
-      return layout;
+      return fitOnBlur(dw, dh, ow, oh);
     }
     case "square_blur": {
       const side = fixed ? fixed[0] : squareWindow(dw, dh, 0).w;

@@ -484,7 +484,65 @@ quarter-resolution blur: with the stacked bands the filter graph is no longer th
 
 Vertical Blur (chain E) is unchanged and stays below the hardware target (3.28–3.44×); the same
 `vstack` construction would lift it, but that changes an existing preset's command, so it is
-left for a separate change.
+left for a separate change (done the next day: next section).
+
+### Vertical Blur with stacked bands (chain E): timed 60 s exports, 2026-11-17
+
+What it checks: chain E rebuilt like chains G and H, against the §8.1 hardware target (≥4×)
+and Vertical Crop's speed. The background's rectangle is cropped before the quarter-size blur,
+and its bands are stacked around the frame with `vstack`, instead of laying the frame over a
+whole blurred copy with `overlay`.
+
+Method: the previous section's 60 s 1080p60 source on the same laptop. First direct FFmpeg runs
+of the full export command (the app's `h264_amf` arguments, AAC, MP4 with `+faststart`), then
+decode and filters alone (`-f null`, 30 s), then the release app through `start_export`
+(process start included). Two rounds each, interleaved, so every row of a table saw the same
+machine.
+
+Direct FFmpeg, full export command:
+
+| Command | h264_amf, round 1 / round 2 | libx264, once |
+| :--- | :--- | :--- |
+| Vertical Crop (chain D) | 5.30× / 5.35× | |
+| Chain E as before (`overlay`) | 4.56× / 4.35× | 2.32× |
+| Same pieces, `vstack` instead of `overlay` | 4.65× / 4.40× | |
+| Background cropped first, `vstack`, bicubic frame (new chain E) | 4.84× / 4.73× | 2.43× |
+| The same with a Lanczos frame, as in G and H | 4.60× / 4.33× | 2.29× |
+
+Decode and filters alone, per 1080p frame (two rounds): decoding 0.39–0.42 ms, Vertical Crop
+0.79–0.80 ms, chain E as before 2.46–2.48 ms, the new chain E 1.99–2.07 ms, with a Lanczos frame
+2.35–2.72 ms. In pieces (decoding included): the frame's downscale to 1080×608 0.66–0.72 ms
+bicubic and 1.03–1.04 ms Lanczos; the background (crop, 270×480, `boxblur=10:2`, 1080×1920)
+1.35–1.43 ms.
+
+- `vstack` instead of `overlay` gives bit-identical frames (framemd5) but only 1–2% of speed
+  here: chain E's 1080×608 frame is cheap to overlay, unlike chain G's 1080×1080 square.
+- Cropping the background's rectangle first gains the most: its downscale to 270×480 reads
+  608×1080 pixels instead of the whole 1920×1080 frame.
+- Scaling the frame with Lanczos, as chains G and H do, gives the gain back, so chain E keeps
+  FFmpeg's default bicubic. Its frame is then unchanged pixel for pixel: the frame region's
+  framemd5 matched the old chain over 60 frames of 1920×1080, 1080×2340 and 1280×720 sources.
+  The blurred bands differ from the old chain's by at most 5 luma levels (mean under 0.6).
+- No gain from two swscale threads on the frame's downscale (`scale=…:threads=2`, three rounds:
+  4.29–4.82× against 4.28–4.98× without), nor from a bilinear upscale of the background (same
+  filter time). One of those rounds was slow for every command, Vertical Crop included (4.80×).
+
+Release app (`npx tauri build --no-bundle`, sidecars next to `rustcut.exe`), round 1 / round 2:
+
+| Preset | libx264 | h264_amf |
+| :--- | :--- | :--- |
+| Vertical Crop (baseline) | 2.01× / 1.86× | 4.61× / 4.73× |
+| Vertical Blur (new chain E) | 1.95× / 1.72× | 3.98× / 4.16× |
+| Square on Blur 9:16 (G) | 1.89× / 1.75× | 4.38× / 4.55× |
+| Square Blur 1:1 (H) | 2.96× / 2.74× | 4.62× / 5.00× |
+
+The laptop was faster than on 2026-11-16 (Vertical Crop 4.61–4.73× with AMF, against
+4.12–4.23× then), so compare within a day. Vertical Blur now runs at 86–88% of Vertical Crop's
+AMF speed, where the old chain ran at 80–81%, and at 92–97% of its libx264 speed (82–89%
+before). With AMF it reached 3.98× and 4.16×, at the 4× target, which the old chain missed by
+14–18%. Chain H's frame is downscaled with Lanczos at the same cost, but its 1080×1080 output
+encodes faster and it clears 4× anyway (4.62–5.00×). From the app, each export took about
+1.5–2.5 s longer than the same FFmpeg command run on its own, as in the previous section.
 
 ### First recorded run: quick mode, debug build, busy machine (not representative)
 
