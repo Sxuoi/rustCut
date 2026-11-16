@@ -84,6 +84,7 @@ pub fn run() {
             commands::set_view_state,
             commands::save_now,
             commands::crop_window,
+            commands::frame_layout,
             commands::preview_export,
             commands::start_export,
             commands::cancel_export,

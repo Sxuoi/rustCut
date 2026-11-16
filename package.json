@@ -16,7 +16,7 @@
     "sample": "node scripts/make-sample.mjs",
     "bindings": "cargo test -p rustcut-model --lib && node scripts/bindings-index.mjs",
     "e2e:build": "tauri build --debug --no-bundle",
-    "e2e": "node --test --test-concurrency=1 tests/e2e/editing.test.mjs tests/e2e/export.test.mjs tests/e2e/fixtures.test.mjs tests/e2e/keyboard.test.mjs tests/e2e/overlay.test.mjs",
+    "e2e": "node --test --test-concurrency=1 tests/e2e/editing.test.mjs tests/e2e/export.test.mjs tests/e2e/fixtures.test.mjs tests/e2e/keyboard.test.mjs tests/e2e/overlay.test.mjs tests/e2e/square.test.mjs",
     "perf": "node scripts/perf.mjs",
     "release:windows": "node scripts/release-windows.mjs"
   },

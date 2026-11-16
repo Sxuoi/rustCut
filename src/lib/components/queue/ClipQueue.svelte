@@ -393,7 +393,7 @@
       >
         {t("queue.bulk.exclude")}
       </button>
-      {#if preset === "vcrop"}
+      {#if preset === "vcrop" || preset === "vsquare"}
         <label class="flex items-center gap-1 text-xs text-muted">
           {t("queue.bulk.crop")}
           <input

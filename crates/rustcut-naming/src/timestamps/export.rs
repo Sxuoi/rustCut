@@ -411,6 +411,7 @@ mod tests {
                 profile: None,
                 level: None,
                 color_transfer: None,
+                color_primaries: None,
                 bit_depth: None,
             },
             audio_tracks: vec![AudioTrack {

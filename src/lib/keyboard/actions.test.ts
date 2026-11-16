@@ -429,13 +429,22 @@ describe("MRK-05 Alt+I / Alt+O retime the selected clip", () => {
 });
 
 describe("FRM-03 Alt+←/→ crop nudges", () => {
-  it("only with the Vertical Crop preset", () => {
+  it("only with a crop-window preset (Vertical Crop, Square on Blur)", () => {
     const { project, ui, actions } = setup();
     project.clips = [clip("a", 1, 10, 20)];
     project.select("a");
     actions.run("cropRight");
     expect(project.edits).toHaveLength(0);
     expect(ui.toasts.at(-1)?.code).toBe("crop_not_vertical");
+    // The blur-only presets have no window to move either.
+    for (const framing of ["vertical_blur", "square_blur"] as const) {
+      project.settings = { cut_mode: "accurate", framing } as ExportSettings;
+      actions.run("cropRight");
+      expect(project.edits).toHaveLength(0);
+    }
+    project.settings = { cut_mode: "accurate", framing: "vertical_square" } as ExportSettings;
+    actions.run("cropRight");
+    expect(project.edits.map((e) => e.edit)).toEqual([{ kind: "set_crop", crop_x_offset: 0.05 }]);
   });
 
   it("nudges ±0.05 / ±0.25 and chains fast repeats", () => {

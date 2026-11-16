@@ -12,11 +12,14 @@ import type {
   CropWindow,
   EditClipsRequest,
   ExportSettings,
+  FrameLayout,
+  Framing,
   HwEncoderInfo,
   ImportedClip,
   ImportPreview,
   MediaIndexInfo,
   OpenResult,
+  OutputResolution,
   PlaybackInfo,
   PlaybackTier,
   PlatformPreset,
@@ -82,6 +85,20 @@ export class TauriBackend implements Backend {
 
   cropWindow = (displayWidth: number, displayHeight: number, offset: number) =>
     call<CropWindow>("crop_window", { display_width: displayWidth, display_height: displayHeight, offset });
+  frameLayout = (
+    framing: Framing,
+    displayWidth: number,
+    displayHeight: number,
+    offset: number,
+    outputResolution: OutputResolution,
+  ) =>
+    call<FrameLayout | null>("frame_layout", {
+      framing,
+      display_width: displayWidth,
+      display_height: displayHeight,
+      offset,
+      output_resolution: outputResolution,
+    });
 
   previewExport = (clipIds: string[], settings: ExportSettings) =>
     call<PreflightReport>("preview_export", { clip_ids: clipIds, settings });

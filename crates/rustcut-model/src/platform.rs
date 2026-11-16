@@ -11,7 +11,9 @@ use ts_rs::TS;
 pub struct PlatformPreset {
     pub id: String,
     pub label: String,
-    /// `vertical_crop` or `vertical_blur`.
+    /// A framed option: `vertical_crop`, `vertical_blur`, `vertical_square`
+    /// or `square_blur` (informational; the Export dialog keeps the user's
+    /// chosen preset).
     pub framing: Framing,
     pub output_resolution: OutputResolution,
     /// Longest clip the platform accepts; `None` = no limit.

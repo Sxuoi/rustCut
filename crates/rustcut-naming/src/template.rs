@@ -264,6 +264,8 @@ mod tests {
             (Preset::Accurate, "accurate"),
             (Preset::Vcrop, "vcrop"),
             (Preset::Vblur, "vblur"),
+            (Preset::Vsquare, "vsquare"),
+            (Preset::Square, "square"),
         ] {
             assert_eq!(render_name("{preset}", &ctx("x", p), true).unwrap(), s);
         }

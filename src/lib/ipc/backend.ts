@@ -15,11 +15,14 @@ import type {
   CropWindow,
   EditClipsRequest,
   ExportSettings,
+  FrameLayout,
+  Framing,
   HwEncoderInfo,
   ImportedClip,
   ImportPreview,
   MediaIndexInfo,
   OpenResult,
+  OutputResolution,
   PlaybackInfo,
   PlaybackTier,
   PlatformPreset,
@@ -75,6 +78,14 @@ export interface Backend {
 
   /** FRM-04: the same Rust function the export uses. */
   cropWindow(displayWidth: number, displayHeight: number, offset: number): Promise<CropWindow>;
+  /** FRM-04 / FRM-09: layout of a framed export (`null` for the original framing). */
+  frameLayout(
+    framing: Framing,
+    displayWidth: number,
+    displayHeight: number,
+    offset: number,
+    outputResolution: OutputResolution,
+  ): Promise<FrameLayout | null>;
 
   previewExport(clipIds: string[], settings: ExportSettings): Promise<PreflightReport>;
   startExport(clipIds: string[], settings: ExportSettings): Promise<BatchInfo>;

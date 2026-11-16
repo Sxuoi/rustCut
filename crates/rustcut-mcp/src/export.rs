@@ -46,20 +46,24 @@ pub fn parse_preset(s: Option<&str>) -> Result<Preset, String> {
         Some("accurate") => Ok(Preset::Accurate),
         Some("vertical_crop") | Some("vcrop") => Ok(Preset::Vcrop),
         Some("vertical_blur") | Some("vblur") => Ok(Preset::Vblur),
+        Some("vertical_square") | Some("vsquare") => Ok(Preset::Vsquare),
+        Some("square_blur") | Some("square") => Ok(Preset::Square),
         Some(other) => Err(format!(
-            "Unknown preset \"{other}\". Use lossless, accurate, vertical_crop or vertical_blur."
+            "Unknown preset \"{other}\". Use lossless, accurate, vertical_crop, vertical_blur, vertical_square or square_blur."
         )),
     }
 }
 
-/// Parses the resolution names the tools accept.
+/// Parses the resolution names the tools accept. The square sizes name the
+/// same setting as the 9:16 size of the same width (square_blur uses the
+/// width for both sides).
 pub fn parse_resolution(s: &str) -> Result<OutputResolution, String> {
     match s.trim().to_lowercase().as_str() {
-        "1080x1920" => Ok(OutputResolution::Full1080x1920),
-        "720x1280" => Ok(OutputResolution::Hd720x1280),
+        "1080x1920" | "1080x1080" => Ok(OutputResolution::Full1080x1920),
+        "720x1280" | "720x720" => Ok(OutputResolution::Hd720x1280),
         "native" => Ok(OutputResolution::Native),
         other => Err(format!(
-            "Unknown resolution \"{other}\". Use 1080x1920, 720x1280 or native."
+            "Unknown resolution \"{other}\". Use 1080x1920, 720x1280 or native (1080x1080 and 720x720 for square_blur)."
         )),
     }
 }
@@ -650,6 +654,18 @@ mod tests {
         assert_eq!(parse_preset(None).unwrap(), Preset::Lossless);
         assert_eq!(parse_preset(Some("Vertical_Crop")).unwrap(), Preset::Vcrop);
         assert_eq!(parse_preset(Some("vertical_blur")).unwrap(), Preset::Vblur);
+        assert_eq!(
+            parse_preset(Some("vertical_square")).unwrap(),
+            Preset::Vsquare
+        );
+        assert_eq!(parse_preset(Some("vsquare")).unwrap(), Preset::Vsquare);
+        assert_eq!(parse_preset(Some("Square_Blur")).unwrap(), Preset::Square);
+        assert_eq!(parse_preset(Some("square")).unwrap(), Preset::Square);
+        assert!(
+            parse_preset(Some("1:1"))
+                .unwrap_err()
+                .contains("square_blur")
+        );
         assert_eq!(parse_preset(Some("accurate")).unwrap(), Preset::Accurate);
         assert!(parse_preset(Some("fast")).unwrap_err().contains("lossless"));
     }
@@ -658,6 +674,14 @@ mod tests {
     fn resolution_and_conflict_names() {
         assert_eq!(
             parse_resolution("720x1280").unwrap(),
+            OutputResolution::Hd720x1280
+        );
+        assert_eq!(
+            parse_resolution("1080x1080").unwrap(),
+            OutputResolution::Full1080x1920
+        );
+        assert_eq!(
+            parse_resolution("720X720").unwrap(),
             OutputResolution::Hd720x1280
         );
         assert_eq!(

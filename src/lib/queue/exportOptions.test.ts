@@ -15,7 +15,10 @@ import {
   isEncoderChoice,
   isHardwareEncoder,
   isReencodePreset,
+  hasCropWindow,
+  isFramedPreset,
   isVerticalPreset,
+  outputSize,
   leadInSummary,
   fromBackendPresets,
   loadPlatformPresets,
@@ -93,8 +96,8 @@ const nvenc: HwEncoderInfo = { name: "h264_nvenc", label: "NVIDIA NVENC H.264", 
 const qsv: HwEncoderInfo = { name: "h264_qsv", label: "Intel Quick Sync H.264", available: false, error: "x" };
 
 describe("§6.2 presets", () => {
-  it("lists the four presets", () => {
-    expect(PRESETS).toEqual(["lossless", "accurate", "vcrop", "vblur"]);
+  it("lists the six presets", () => {
+    expect(PRESETS).toEqual(["lossless", "accurate", "vcrop", "vblur", "vsquare", "square"]);
   });
 
   it("mirrors ExportSettings::preset (Lossless ignores framing)", () => {
@@ -102,6 +105,9 @@ describe("§6.2 presets", () => {
     expect(presetOf({ cut_mode: "accurate", framing: "original" })).toBe("accurate");
     expect(presetOf({ cut_mode: "accurate", framing: "vertical_crop" })).toBe("vcrop");
     expect(presetOf({ cut_mode: "accurate", framing: "vertical_blur" })).toBe("vblur");
+    expect(presetOf({ cut_mode: "accurate", framing: "vertical_square" })).toBe("vsquare");
+    expect(presetOf({ cut_mode: "accurate", framing: "square_blur" })).toBe("square");
+    expect(presetOf({ cut_mode: "lossless", framing: "square_blur" })).toBe("lossless");
   });
 
   it("a vertical preset switches the cut mode to Frame-Accurate", () => {
@@ -113,8 +119,11 @@ describe("§6.2 presets", () => {
   });
 
   it("classifies presets", () => {
-    expect(isVerticalPreset("vcrop") && isVerticalPreset("vblur")).toBe(true);
-    expect(isVerticalPreset("accurate") || isVerticalPreset(null)).toBe(false);
+    expect(isVerticalPreset("vcrop") && isVerticalPreset("vblur") && isVerticalPreset("vsquare")).toBe(true);
+    expect(isVerticalPreset("accurate") || isVerticalPreset(null) || isVerticalPreset("square")).toBe(false);
+    expect(PRESETS.filter(isFramedPreset)).toEqual(["vcrop", "vblur", "vsquare", "square"]);
+    expect(PRESETS.filter(hasCropWindow)).toEqual(["vcrop", "vsquare"]);
+    expect(isFramedPreset(null) || hasCropWindow(null)).toBe(false);
     expect(isReencodePreset("accurate") && !isReencodePreset("lossless") && !isReencodePreset(null)).toBe(true);
   });
 });
@@ -122,6 +131,13 @@ describe("§6.2 presets", () => {
 describe("FRM-06 resolution and frame-rate options", () => {
   it("offers 1080x1920 (default first), 720x1280 and Native", () => {
     expect(RESOLUTIONS).toEqual(["1080x1920", "720x1280", "native"]);
+  });
+
+  it("names the output size of each choice per preset (square = width on both sides)", () => {
+    expect(outputSize("vsquare", "1080x1920")).toBe("1080×1920");
+    expect(outputSize("square", "1080x1920")).toBe("1080×1080");
+    expect(outputSize("square", "720x1280")).toBe("720×720");
+    expect(outputSize("vcrop", "native")).toBeNull();
   });
 
   it("offers 30/60/120 caps and uncapped source rate", () => {

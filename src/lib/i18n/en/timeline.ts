@@ -18,13 +18,14 @@ const messages: Record<string, string> = {
   "timeline.snap.keyframe": "snapped to keyframe",
   "timeline.snap.edge": "snapped to clip edge",
 
-  "crop.window.label": "9:16 crop window",
+  "crop.window.label": "{shape} crop window",
   "crop.window.valuetext": "Crop position {offset}",
   "crop.position": "Crop position",
   "crop.reset": "Reset",
-  "crop.only916": "9:16 only",
-  "crop.hint.noClip": "Select a clip to position the 9:16 window.",
-  "crop.hint.ignored": "Crop position ignored: this source is already 9:16 or taller.",
+  "crop.outputOnly": "{shape} only",
+  "crop.outputOnly.title": "Show only what the export contains",
+  "crop.hint.noClip": "Select a clip to position the {shape} window.",
+  "crop.hint.ignored": "Crop position ignored: this source is already {shape} or taller.",
 };
 
 export default messages;

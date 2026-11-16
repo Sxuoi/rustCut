@@ -21,7 +21,7 @@ import {
   type NameContext,
   type OutputRequest,
 } from "./naming";
-import { isVertical, normalizeExportSettings, presetOf } from "./model";
+import { isFramed, normalizeExportSettings, presetOf } from "./model";
 import { defaultOutputDir } from "./sources";
 import { baseName, fail, formatSeconds, stripExtension, toMs } from "./util";
 
@@ -34,7 +34,7 @@ export const MAX_PATH_CHARS = 259;
 
 /** Video `maxrate` of the re-encode presets (§7.6): 16 Mbps at 1080p, else 8 Mbps. */
 export function videoMaxrateBps(preset: Preset, settings: ExportSettings, sourceHeight: number): number {
-  if (isVertical(preset)) {
+  if (isFramed(preset)) {
     if (settings.output_resolution === "1080x1920") return 16_000_000;
     if (settings.output_resolution === "720x1280") return 8_000_000;
   }

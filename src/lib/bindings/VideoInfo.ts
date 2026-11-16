@@ -24,4 +24,9 @@ hdr: boolean,
 /**
  * Absolute stream index of this video stream in the source.
  */
-stream_index: number | null, pix_fmt: string | null, profile: string | null, level: number | null, color_transfer: string | null, bit_depth: number | null, };
+stream_index: number | null, pix_fmt: string | null, profile: string | null, level: number | null, color_transfer: string | null, 
+/**
+ * FFprobe's `color_primaries` (e.g. `bt709`, `bt2020`). The square
+ * presets' stacked frames lose it, so chains G and H set it back.
+ */
+color_primaries: string | null, bit_depth: number | null, };

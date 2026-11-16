@@ -3,4 +3,4 @@
 /**
  * FRM-01 framing options (Frame-Accurate only).
  */
-export type Framing = "original" | "vertical_crop" | "vertical_blur";
+export type Framing = "original" | "vertical_crop" | "vertical_blur" | "vertical_square" | "square_blur";

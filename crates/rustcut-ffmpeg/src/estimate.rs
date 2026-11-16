@@ -85,7 +85,7 @@ pub fn nominal_rates(source: &SourceInfo, settings: &ExportSettings) -> Option<P
                 bufsize_bits: 0,
             })
         }
-        Preset::Vcrop | Preset::Vblur => Some(PresetRates {
+        Preset::Vcrop | Preset::Vblur | Preset::Vsquare | Preset::Square => Some(PresetRates {
             video_bps: VERTICAL_MAXRATE_BPS,
             // One stereo track (chosen or mixed), none for silent sources.
             audio_bps: if tracks > 0 { AUDIO_TRACK_BPS } else { 0 },

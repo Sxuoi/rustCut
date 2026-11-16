@@ -1,14 +1,14 @@
 <script lang="ts">
   // Video player (PRD §7.3 playback tiers, PLY-01..04, §6.4 states, FRM-04
-  // crop overlay). OWNER: fe-shell.
+  // crop overlay, FRM-09 output-only view with the blurred background).
+  // OWNER: fe-shell.
   //
   // Tier handling: canPlayType(mime_type) with the exact codec string, then a
   // decoded first frame within 3 s; on failure (or any later player error)
   // request `next_tier`. Remux/proxy tiers show "Preparing preview" progress.
   // No tier left -> a specific message (codec, why, what to do), never black.
   import { untrack } from "svelte";
-  import type { PlaybackInfo, PlaybackTier } from "$lib/bindings";
-  import { isVerticalCrop } from "$lib/components/shell/format";
+  import type { FrameLayout, Framing, PlaybackInfo, PlaybackTier } from "$lib/bindings";
   import { t } from "$lib/i18n";
   import { backend, BackendError } from "$lib/ipc";
   import { media } from "$lib/state/media.svelte";
@@ -27,7 +27,10 @@
   import { project } from "$lib/state/project.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { framing } from "$lib/state/framing.svelte";
-  import { cropWindow } from "$lib/util/crop";
+  import { presetOf } from "$lib/queue/exportOptions";
+  import { outputView } from "$lib/util/blurPreview";
+  import { frameLayout, windowShape } from "$lib/util/crop";
+  import BlurBackdrop from "./BlurBackdrop.svelte";
   import CropOverlay from "./CropOverlay.svelte";
 
   type Status = "idle" | "missing" | "preparing" | "loading" | "switching" | "ready" | "unsupported";
@@ -49,38 +52,72 @@
   let latestTier: PlaybackTier | null = null;
   let triedGeneration = -1;
 
-  const vertical = $derived(isVerticalCrop(project.settings));
   const displayW = $derived(project.source?.video.display_width ?? 0);
   const displayH = $derived(project.source?.video.display_height ?? 0);
   const fullRect = $derived(containRect(box.w, box.h, displayW, displayH));
-  /**
-   * FRM-04 "9:16 only": the window region (source px) shown instead of the
-   * whole frame. Same geometry as the export (util/crop mirrors the Rust fn).
-   */
-  const window9x16 = $derived(
-    vertical && framing.nineSixteenOnly && displayW > 0 && displayH > 0
-      ? cropWindow(displayW, displayH, framing.offsetFor(project.primary))
-      : null,
+  /** The framing the export uses (Lossless always exports the original framing). */
+  const framingKind = $derived<Framing>(
+    project.settings && presetOf(project.settings) !== "lossless" ? project.settings.framing : "original",
   );
-  /** Clipping wrapper (CSS px in the player box) that fits the window region. */
-  const clipBox = $derived(window9x16 ? containRect(box.w, box.h, window9x16.w, window9x16.h) : null);
-  /** Scale from source px to CSS px in 9:16-only mode. */
-  const clipScale = $derived(window9x16 && clipBox ? clipBox.width / window9x16.w : 1);
+  const resolution = $derived(project.settings?.output_resolution ?? "1080x1920");
+  /** 9:16 or 1:1 crop window positioned per clip; `null` for the other framings. */
+  const shape = $derived(windowShape(framingKind));
+  const committedOffset = $derived(shape && project.primary ? project.primary.crop_x_offset : 0);
+  /** An overlay or slider edit is in flight for the primary clip. */
+  const editing = $derived(
+    shape !== null && framing.preview !== null && project.primary !== null && framing.preview.id === project.primary.id,
+  );
+
+  // FRM-04: the authoritative layout comes from Rust (the function the export
+  // uses) for the committed offset; the TS port only bridges an edit in flight.
+  let remote = $state.raw<{ key: string; layout: FrameLayout | null } | null>(null);
+  let layoutToken = 0;
+  const layoutKey = $derived(`${framingKind}|${displayW}x${displayH}|${resolution}|${committedOffset}`);
+  $effect(() => {
+    const key = layoutKey;
+    const f = framingKind;
+    const dw = displayW;
+    const dh = displayH;
+    const res = resolution;
+    const off = committedOffset;
+    if (f === "original" || dw <= 0 || dh <= 0) return;
+    const mine = ++layoutToken;
+    backend
+      .frameLayout(f, dw, dh, off, res)
+      .then((layout) => {
+        if (mine === layoutToken) remote = { key, layout };
+      })
+      .catch(() => {});
+  });
+  const layout = $derived.by<FrameLayout | null>(() => {
+    if (framingKind === "original" || displayW <= 0 || displayH <= 0) return null;
+    if (!editing && remote && remote.key === layoutKey) return remote.layout;
+    const off = editing ? framing.offsetFor(project.primary) : committedOffset;
+    return frameLayout(framingKind, displayW, displayH, off, resolution);
+  });
+  /**
+   * FRM-04 "9:16 only" / "1:1 only": just what the export contains. Vertical
+   * Crop shows the window region; the blur presets show the whole output
+   * frame, the window at its place over the blurred background.
+   */
+  const view = $derived(layout && framing.outputOnly ? outputView(layout, box.w, box.h) : null);
+  /** Clipping wrapper (CSS px in the player box) where the window is shown. */
+  const clipBox = $derived(view ? view.fg : null);
   /** Whole-video rect relative to the player box (overlay coordinate space). */
   const rect = $derived(
-    window9x16 && clipBox
+    view && layout
       ? {
-          left: clipBox.left - window9x16.x * clipScale,
-          top: clipBox.top - window9x16.y * clipScale,
-          width: displayW * clipScale,
-          height: displayH * clipScale,
+          left: view.fg.left - layout.window.x * view.vx,
+          top: view.fg.top - layout.window.y * view.vy,
+          width: displayW * view.vx,
+          height: displayH * view.vy,
         }
       : fullRect,
   );
   /** The video element's box inside its parent (clip wrapper or the player). */
   const videoStyle = $derived(
-    window9x16 && clipBox
-      ? `left:${-window9x16.x * clipScale}px;top:${-window9x16.y * clipScale}px;width:${displayW * clipScale}px;height:${displayH * clipScale}px;`
+    view && layout
+      ? `left:${-layout.window.x * view.vx}px;top:${-layout.window.y * view.vy}px;width:${displayW * view.vx}px;height:${displayH * view.vy}px;`
       : "left:0;top:0;width:100%;height:100%;",
   );
   let pb = $state.raw<PlaybackInfo | null>(null);
@@ -263,15 +300,19 @@
   aria-label={t("player.region")}
   class="relative h-full w-full overflow-hidden bg-black outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
 >
+  {#if view && layout?.blur && video && status === "ready"}
+    <BlurBackdrop {video} {layout} box={view.out} displayWidth={displayW} displayHeight={displayH} />
+  {/if}
   <div
     class="absolute overflow-hidden"
+    data-testid="player-clip"
     style={clipBox ? `left:${clipBox.left}px;top:${clipBox.top}px;width:${clipBox.width}px;height:${clipBox.height}px;` : "inset:0;"}
   >
     <!-- svelte-ignore a11y_media_has_caption, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <video
       bind:this={video}
-      class="absolute max-w-none object-contain"
-        style={videoStyle}
+      class="absolute max-w-none {view ? 'object-fill' : 'object-contain'}"
+      style={videoStyle}
       preload="auto"
       playsinline
       disablepictureinpicture
@@ -290,9 +331,9 @@
     ></video>
   </div>
 
-  {#if vertical && status === "ready" && rect && displayW > 0 && displayH > 0}
+  {#if shape && layout && status === "ready" && rect && displayW > 0 && displayH > 0}
     <div class="absolute inset-0">
-      <CropOverlay {rect} displayWidth={displayW} displayHeight={displayH} />
+      <CropOverlay {rect} displayWidth={displayW} displayHeight={displayH} win={layout.window} {shape} outputMode={view !== null} />
     </div>
   {/if}
 

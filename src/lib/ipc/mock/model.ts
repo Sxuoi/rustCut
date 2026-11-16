@@ -73,6 +73,8 @@ export function presetOf(s: ExportSettings): Preset {
   if (s.cut_mode === "lossless") return "lossless";
   if (s.framing === "vertical_crop") return "vcrop";
   if (s.framing === "vertical_blur") return "vblur";
+  if (s.framing === "vertical_square") return "vsquare";
+  if (s.framing === "square_blur") return "square";
   return "accurate";
 }
 
@@ -81,17 +83,29 @@ export const PRESET_LABELS: Record<Preset, string> = {
   accurate: "Frame-Accurate (Original)",
   vcrop: "Vertical Crop 9:16",
   vblur: "Vertical Blur 9:16",
+  vsquare: "Square on Blur 9:16",
+  square: "Square Blur 1:1",
 };
 
-export function isVertical(p: Preset): boolean {
-  return p === "vcrop" || p === "vblur";
+/** `Preset::is_framed`: the 9:16 presets and Square Blur 1:1. */
+export function isFramed(p: Preset): boolean {
+  return p === "vcrop" || p === "vblur" || p === "vsquare" || p === "square";
 }
+
+const FRAMINGS: Record<Preset, ExportSettings["framing"]> = {
+  lossless: "original",
+  accurate: "original",
+  vcrop: "vertical_crop",
+  vblur: "vertical_blur",
+  vsquare: "vertical_square",
+  square: "square_blur",
+};
 
 /** `ExportSettings::apply_preset`. */
 export function applyPreset(s: ExportSettings, preset: Preset): ExportSettings {
   const out = { ...s };
   out.cut_mode = preset === "lossless" ? "lossless" : "accurate";
-  out.framing = preset === "vcrop" ? "vertical_crop" : preset === "vblur" ? "vertical_blur" : "original";
+  out.framing = FRAMINGS[preset];
   return out;
 }
 

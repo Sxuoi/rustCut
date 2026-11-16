@@ -60,7 +60,7 @@ export function clipFields(c: Clip): ClipFields {
 
 /** `Clip::content_hash`: what determines an export's content and file name. */
 export function contentHash(c: Clip, preset: Preset): string {
-  const crop = preset === "vcrop" ? roundAway(c.crop_x_offset * 10_000) : 0;
+  const crop = preset === "vcrop" || preset === "vsquare" ? roundAway(c.crop_x_offset * 10_000) : 0;
   return hash32(`${toMs(c.start_sec)}|${toMs(c.end_sec)}|${crop}|${c.name}|${preset}`);
 }
 

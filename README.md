@@ -8,7 +8,7 @@
 
 A non-destructive batch video clipper: play a long recording, mark In and Out as often as you like,
 name each clip, and export every clip as its own file in one action. Export losslessly at disk
-speed, or frame-accurately and pre-framed 9:16 for Shorts, TikTok and Reels.
+speed, or frame-accurately and pre-framed 9:16 or 1:1 for Shorts, TikTok, Reels and feed posts.
 
 [![Latest release](https://img.shields.io/github/v/release/Sxuoi/rustCut?label=release&color=3b82f6)](https://github.com/Sxuoi/rustCut/releases/latest)
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10_%7C_11-0078D4)](#install)
@@ -30,9 +30,10 @@ speed, or frame-accurately and pre-framed 9:16 for Shorts, TikTok and Reels.
 
 - **Lossless or frame-accurate.** Lossless export copies the streams, bit-identical and at disk
   speed, starting at the keyframe at or before In. Frame-Accurate re-encodes from the exact frame.
-- **Vertical 9:16 in one step.** Crop through a 9:16 window you place per clip, or keep the whole frame
-  over a blurred background, at 1080x1920. Editable presets flag clips that are too long for
-  YouTube Shorts (3:00), TikTok (10:00) or Instagram Reels (3:00).
+- **Vertical 9:16 or square in one step.** Crop through a 9:16 window you place per clip, keep the
+  whole frame over a blurred background, or center a square you place per clip on a blurred
+  background, all at 1080x1920; or export square 1080x1080 files. Editable presets flag clips that
+  are too long for YouTube Shorts (3:00), TikTok (10:00) or Instagram Reels (3:00).
 - **Keyboard first.** Every action has a shortcut, and <kbd>?</kbd> shows them all. See the
   [full list](#keyboard-shortcuts).
 - **A batch export you can trust.** Pre-flight checks before anything starts, a hardware encoder when
@@ -56,6 +57,11 @@ Choose **Vertical Crop 9:16** and a 9:16 window appears over the video. Drag it,
 <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd>, to frame each clip, and tick **9:16 only** to
 see the result. **Vertical Blur 9:16** keeps the whole frame over a blurred background instead. Both
 export 1080x1920 files.
+
+Two square options use the same blurred background. **Square on Blur 9:16** puts a square you place per
+clip, just like the 9:16 window, in the middle of a 1080x1920 frame. **Square Blur 1:1** exports a
+1080x1080 file with the whole frame on a blurred background. Tick **9:16 only** or **1:1 only** to see
+exactly what the export will contain, blurred background included.
 
 ### Trim, loop and retime
 
@@ -166,9 +172,9 @@ Press <kbd>?</kbd> in the app to see this list. On macOS, use <kbd>Cmd</kbd> whe
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save now (auto-save is always on) |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Open a video or project |
 
-### Vertical crop
+### Crop window
 
-These work with the Vertical Crop 9:16 preset.
+These work with the Vertical Crop 9:16 and Square on Blur 9:16 presets.
 
 | Keys | Action |
 | :--- | :--- |

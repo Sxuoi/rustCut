@@ -3,8 +3,8 @@
 import type { ExportSettings, Preset, SaveState } from "$lib/bindings";
 import { t } from "$lib/i18n";
 
-/** The four presets in Export-dialog order (§3.1 step 6). */
-export const PRESETS: readonly Preset[] = ["lossless", "accurate", "vcrop", "vblur"];
+/** The presets in Export-dialog order (§3.1 step 6). */
+export const PRESETS: readonly Preset[] = ["lossless", "accurate", "vcrop", "vblur", "vsquare", "square"];
 
 /** i18n key of a preset's name ("Lossless (Original)", …). */
 export function presetLabelKey(p: Preset): string {
@@ -19,6 +19,8 @@ export function presetOf(s: Pick<ExportSettings, "cut_mode" | "framing">): Prese
   if (s.cut_mode === "lossless") return "lossless";
   if (s.framing === "vertical_crop") return "vcrop";
   if (s.framing === "vertical_blur") return "vblur";
+  if (s.framing === "vertical_square") return "vsquare";
+  if (s.framing === "square_blur") return "square";
   return "accurate";
 }
 
@@ -37,12 +39,25 @@ export function applyPreset(s: ExportSettings, p: Preset): ExportSettings {
       return { ...s, cut_mode: "accurate", framing: "vertical_crop" };
     case "vblur":
       return { ...s, cut_mode: "accurate", framing: "vertical_blur" };
+    case "vsquare":
+      return { ...s, cut_mode: "accurate", framing: "vertical_square" };
+    case "square":
+      return { ...s, cut_mode: "accurate", framing: "square_blur" };
   }
 }
 
-/** Vertical Crop 9:16 is active (crop overlay, `Alt+←/→` nudges). */
-export function isVerticalCrop(s: Pick<ExportSettings, "cut_mode" | "framing"> | null | undefined): boolean {
-  return !!s && presetOf(s) === "vcrop";
+/** A framed preset is active (9:16 or 1:1): framing controls under the player. */
+export function isFramed(s: Pick<ExportSettings, "cut_mode" | "framing"> | null | undefined): boolean {
+  if (!s) return false;
+  const p = presetOf(s);
+  return p !== "lossless" && p !== "accurate";
+}
+
+/** A preset with a crop window is active (Vertical Crop, Square on Blur): overlay, `Alt+←/→` nudges. */
+export function hasCropWindow(s: Pick<ExportSettings, "cut_mode" | "framing"> | null | undefined): boolean {
+  if (!s) return false;
+  const p = presetOf(s);
+  return p === "vcrop" || p === "vsquare";
 }
 
 /** Last path segment (either separator): `C:\v\a b.mp4` -> `a b.mp4`. */

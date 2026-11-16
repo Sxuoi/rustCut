@@ -123,7 +123,7 @@ describe("queue flags", () => {
     expect(clipFlags(clips, { ...ctx, sourceDurationSec: null }).size).toBe(0);
   });
 
-  it("FRM-08 flags clips longer than a vertical preset's maximum", () => {
+  it("FRM-08 flags clips longer than a framed preset's maximum", () => {
     const clips = [
       makeClip({ id: "ok", index: 1, start_sec: 0, end_sec: 180 }),
       makeClip({ id: "long", index: 2, start_sec: 0, end_sec: 180.001 }),
@@ -132,6 +132,9 @@ describe("queue flags", () => {
     expect(vertical.has("ok")).toBe(false);
     expect(vertical.get("long")).toEqual([{ kind: "too_long", maxSec: 180 }]);
     expect(clipFlags(clips, { sourceDurationSec: 1000, maxDurationSec: 180, preset: "vblur" }).has("long")).toBe(true);
+    expect(clipFlags(clips, { sourceDurationSec: 1000, maxDurationSec: 180, preset: "vsquare" }).has("long")).toBe(true);
+    expect(clipFlags(clips, { sourceDurationSec: 1000, maxDurationSec: 180, preset: "square" }).has("long")).toBe(true);
+    expect(clipFlags(clips, { sourceDurationSec: 1000, maxDurationSec: 180, preset: "accurate" }).size).toBe(0);
     expect(clipFlags(clips, { sourceDurationSec: 1000, maxDurationSec: 180, preset: "lossless" }).size).toBe(0);
     expect(clipFlags(clips, { sourceDurationSec: 1000, maxDurationSec: null, preset: "vcrop" }).size).toBe(0);
   });

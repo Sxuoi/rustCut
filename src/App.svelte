@@ -14,7 +14,7 @@
   import { ui } from "$lib/state/ui.svelte";
   import { roundMs } from "$lib/util/time";
   import { installFileDrop } from "$lib/components/shell/dragdrop";
-  import { isVerticalCrop, stem } from "$lib/components/shell/format";
+  import { isFramed, stem } from "$lib/components/shell/format";
 
   import HeaderBar from "$lib/components/shell/HeaderBar.svelte";
   import EmptyState from "$lib/components/shell/EmptyState.svelte";
@@ -70,7 +70,7 @@
   });
 
   const ready = $derived(ui.phase === "ready" && project.loaded);
-  const vertical = $derived(isVerticalCrop(project.settings));
+  const framed = $derived(isFramed(project.settings));
 
   // PRJ-03: persist playhead, zoom and selection (throttled in the store).
   // Only once the first frame is shown, so the restored playhead is not
@@ -121,7 +121,7 @@
     <main class="relative grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_420px] grid-rows-[minmax(0,1fr)_auto] gap-px bg-line">
       <section class="flex min-h-0 flex-col bg-bg" aria-label={t("app.region.player")}>
         <div class="relative min-h-0 flex-1"><Player /></div>
-        {#if vertical}<CropControls />{/if}
+        {#if framed}<CropControls />{/if}
         <Transport />
       </section>
       <aside class="row-span-1 flex min-h-0 flex-col bg-panel" aria-label={t("app.region.queue")}>

@@ -34,6 +34,8 @@ import type {
   CropWindow,
   EditClipsRequest,
   ExportSettings,
+  FrameLayout,
+  Framing,
   HwEncoderInfo,
   ImportedClip,
   ImportPreview,
@@ -41,6 +43,7 @@ import type {
   Notice,
   NoticeLevel,
   OpenResult,
+  OutputResolution,
   PlaybackInfo,
   PlaybackTier,
   PlatformPreset,
@@ -59,7 +62,7 @@ import type {
   TimestampFormat,
   ViewState,
 } from "$lib/bindings";
-import { cropWindow as tsCropWindow } from "$lib/util/crop";
+import { cropWindow as tsCropWindow, frameLayout as tsFrameLayout } from "$lib/util/crop";
 import type { Backend, EventHandler } from "./backend";
 import { browserDownload, type MockOptions } from "./mock/options";
 import { DEFAULT_EXPORT_TIMING, MockExporter } from "./mock/exporter";
@@ -503,6 +506,16 @@ export class MockBackend implements Backend {
 
   async cropWindow(displayWidth: number, displayHeight: number, offset: number): Promise<CropWindow> {
     return tsCropWindow(displayWidth, displayHeight, offset);
+  }
+
+  async frameLayout(
+    framing: Framing,
+    displayWidth: number,
+    displayHeight: number,
+    offset: number,
+    outputResolution: OutputResolution,
+  ): Promise<FrameLayout | null> {
+    return tsFrameLayout(framing, displayWidth, displayHeight, offset, outputResolution);
   }
 
   // ----------------------------------------------------------------- export

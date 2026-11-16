@@ -473,16 +473,17 @@ describe("undo / redo (MRK-04)", () => {
     expect(s.clip(clip.id)?.export_status).toBe("outdated");
   });
 
-  it("crop only matters for Vertical Crop's content hash", () => {
+  it("crop only matters for the crop-window presets' content hash", () => {
     const s = makeStore();
     const a = add(s, 10, 20, "Bit");
     const clip = s.clip(a.clip.id) as Clip;
-    const h = (p: "lossless" | "vcrop") => contentHash(clip, p);
-    const [l0, v0] = [h("lossless"), h("vcrop")];
+    const presets = ["lossless", "accurate", "vcrop", "vblur", "vsquare", "square"] as const;
+    const before = presets.map((p) => contentHash(clip, p));
     clip.crop_x_offset = 0.5;
-    expect(h("lossless")).toBe(l0);
-    expect(h("vcrop")).not.toBe(v0);
-    expect(l0).toMatch(/^[0-9a-f]{8}$/);
+    const after = presets.map((p) => contentHash(clip, p));
+    expect(presets.filter((_, i) => before[i] !== after[i])).toEqual(["vcrop", "vsquare"]);
+    expect(new Set(before).size).toBe(presets.length);
+    expect(before[0]).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it("restores exactly over random operation sequences (undo all, then redo all)", () => {

@@ -418,6 +418,74 @@ What the real clips add:
   filter (FFmpeg decodes the clip at 13×, and at 4.0× with the conversion); what limits the full
   export command below that was not measured.
 
+### Square presets (FRM-09): timed 60 s exports, 2026-11-16
+
+What it checks: the §8.1 vertical targets (≥1× realtime software, ≥4× hardware) for the two new
+presets, *Square on Blur 9:16* (chain G) and *Square Blur 1:1* (chain H), next to the existing
+Vertical Crop and Vertical Blur in the same session.
+
+Method: 60 s of `perf.mjs`'s full-mode source recipe (1080p60 `testsrc2`, 8 Mbps CBR H.264,
+2 s GOP, AAC), exported through the app's own engine (`start_export` until the clip's status is
+`completed`, process start included) at 1080×1920 (1080×1080 for Square Blur), 60 fps cap, one
+job, explicit libx264 and then the detected hardware encoder, two rounds. Same laptop as above
+(Ryzen 7 8845HS, Radeon 780M, AMF), bundled FFmpeg 9.0.2. A one-off probe script, not part of
+`perf.mjs` (whose vertical stage times Vertical Crop on the 3 h source).
+
+The first version of chains G and H laid the window over the whole blurred frame with `overlay`.
+Debug build, with a code review running on the machine (× realtime, round 1 / round 2):
+
+| Preset | libx264 | h264_amf |
+| :--- | :--- | :--- |
+| Vertical Crop (baseline) | 2.03× / 1.93× | 4.21× / 4.43× |
+| Vertical Blur (chain E, unchanged) | 1.85× / 1.86× | 3.60× / 3.31× |
+| Square on Blur (G, `overlay`) | 1.90× / 1.71× | 3.72× / 3.70× |
+| Square Blur 1:1 (H, `overlay`) | 2.71× / 2.75× | 4.20× / 4.35× |
+
+With AMF the encoder runs on the GPU and the CPU-side filter graph becomes the limit. Decode
+plus filters alone (FFmpeg with `-f null`, first 30 s of the same source): decode 40×,
+Vertical Crop's crop and Lanczos scale 22×, the blur graphs 6–7×. Timed piece by piece on chain
+G: the background's crop and quarter-size downscale cost about 0.1 ms per frame, `boxblur=10:2`
+at 270×480 about 0.6 ms, the upscale to 1080×1920 about 0.25 ms (fast-bilinear scalers saved
+about 10% of the graph at most), and `overlay` of the square onto the 1080×1920 background
+about 1.2 ms. Joining the same pieces with `vstack` instead (the background's bands above and
+below the square) cost about half as much in total. Direct FFmpeg runs of the full export
+command (60 s, round 1 / round 2):
+
+| Command | h264_amf | libx264 |
+| :--- | :--- | :--- |
+| Vertical Crop (chain D) | 5.25× / 5.34× | |
+| Square on Blur, `overlay` | 4.15× / 4.13× | 2.22× |
+| Square on Blur, `vstack` | 5.12× / 4.92× | 2.35× |
+| Square Blur 1:1, `overlay` | 5.20× / 4.96× | |
+| Square Blur 1:1, `vstack` | 5.40× / 4.96× | |
+
+So chains G and H now crop the background's exact rectangle and stack bands and window with
+`vstack`/`hstack` (§7.6 G, H). Final chains, embedded release build (`npx tauri build
+--no-bundle`, sidecars copied next to `rustcut.exe`), no other export, build or test running
+(the desktop's browser and chat apps stayed open):
+
+| Preset | libx264 | h264_amf |
+| :--- | :--- | :--- |
+| Vertical Crop (baseline) | 1.96× / 2.02× | 4.23× / 4.12× |
+| Vertical Blur (chain E, unchanged) | 1.75× / 1.65× | 3.44× / 3.28× |
+| Square on Blur 9:16 (G) | 1.82× / 1.75× | 4.06× / 3.83× |
+| Square Blur 1:1 (H) | 2.80× / 2.63× | 4.30× / 4.44× |
+
+Software encoding clears 1× everywhere. With AMF, Square Blur 1:1 clears 4×, and Square on
+Blur reached 4.06× in one round and 3.83× in the other, 4–7% behind Vertical Crop in the same
+rounds. Vertical Crop itself measured 4.12–4.23× here, against 4.67–4.81× in perf.mjs runs 7
+and 8 above, so the machine was slower that day for every preset; scaled to those runs,
+Square on Blur would sit near 4.4–4.5×, but that is an extrapolation, not a measurement. Run
+directly (FFmpeg alone, same commands, three rounds), Square on Blur did 4.81–4.91× against
+Vertical Crop's 5.04–5.35×; from the app, FFmpeg took 2–3 s longer per 60 s for every preset,
+which this change does not affect. Blurring at an eighth of the output with `boxblur=5:2` (the
+same blur strength) made no measurable difference (4.83–5.13×), so the chains keep FRM-05's
+quarter-resolution blur: with the stacked bands the filter graph is no longer the bottleneck.
+
+Vertical Blur (chain E) is unchanged and stays below the hardware target (3.28–3.44×); the same
+`vstack` construction would lift it, but that changes an existing preset's command, so it is
+left for a separate change.
+
 ### First recorded run: quick mode, debug build, busy machine (not representative)
 
 Build: debug (`npm run e2e:build`), no commit yet · Machine: AMD Ryzen 7 8845HS, Radeon 780M

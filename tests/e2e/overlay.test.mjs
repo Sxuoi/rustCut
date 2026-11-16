@@ -1,4 +1,5 @@
-// AC-18: measure actual DOM geometry against the crop command used by export.
+// AC-18: measure actual DOM geometry against the layout command used by export, for the 9:16
+// window (Vertical Crop) and the 1:1 window (Square on Blur, FRM-09).
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -37,7 +38,17 @@ async function geometry(app, width, height) {
   }, [width, height]);
 }
 
-describe("AC-18 crop overlay equals export window", { concurrency: false, timeout: 600000 }, () => {
+/** Screen rect of the blurred output frame (output-only view of the blur presets). */
+async function backdrop(app) {
+  return app.page.evaluate(() => {
+    const el = document.querySelector('[data-testid="blur-backdrop"]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+}
+
+describe("AC-18 crop overlay equals export window", { concurrency: false, timeout: 900000 }, () => {
   const ws = makeWorkspace(RAMPS.filter(([, , , generated]) => !generated).map(([file]) => file));
   const app = new App(ws);
   before(async () => {
@@ -58,7 +69,7 @@ describe("AC-18 crop overlay equals export window", { concurrency: false, timeou
   after(async () => { await app.stop(); cleanup(ws); });
 
   for (const [file, width, height] of RAMPS) {
-    test(`${file}: four offsets in full-frame and 9:16-only modes`, async () => {
+    test(`${file}: 9:16 and 1:1 windows, four offsets, full-frame and output-only modes`, async () => {
       await handOffToWindow(app, ws.files[file]);
       await app.page.waitForFunction((path) => {
         const video = document.querySelector("video");
@@ -68,41 +79,63 @@ describe("AC-18 crop overlay equals export window", { concurrency: false, timeou
       const snapshot = await app.invoke("get_snapshot");
       assert.equal(snapshot.project.source.video.display_width, width, "SAR-normalised width");
       assert.equal(snapshot.project.source.video.display_height, height);
-      await app.invoke("set_export_settings", { settings: {
-        ...snapshot.project.export_settings, cut_mode: "accurate", framing: "vertical_crop",
-        output_resolution: "1080x1920",
-      } });
       await app.invoke("add_clip", { req: { start_sec: 0, end_sec: 1, name: null, tag_id: null } });
       await waitFor(async () => (await rows(app)).length === 1, { what: "ramp clip" });
       await app.page.keyboard.press("ArrowUp");
       await waitFor(async () => (await playhead(app)) === 0, { what: "selected clip In" });
       const [clip] = (await app.invoke("get_snapshot")).project.clips;
+      // Both presets have a 9:16 output, so the toggle is "9:16 only" for both.
       const toggle = app.page.getByRole("checkbox", { name: "9:16 only", exact: true });
-      let fixed = null;
-      let firstContent = null;
-      for (const only of [false, true]) {
-        await toggle.setChecked(only);
-        for (const offset of OFFSETS) {
-          await app.invoke("edit_clips", { req: { ids: [clip.id], edit: { kind: "set_crop", crop_x_offset: offset } } });
-          const expected = await app.invoke("crop_window", { display_width: width, display_height: height, offset });
-          await waitFor(async () => {
-            const value = await app.page.locator('[data-testid="crop-overlay"] [role="slider"]').getAttribute("aria-valuenow");
-            return Number(value) === offset && value !== null;
-          }, { timeout: 15000, what: `committed offset ${offset}` });
-          // Wait for both the state patch and the authoritative remote window to render.
-          const actual = await waitFor(async () => {
-            const result = await geometry(app, width, height);
-            return Object.keys(expected).every((k) => Math.abs(result.source[k] - expected[k]) <= 1) && result;
-          }, { timeout: 15000, what: `${file}, only=${only}, offset=${offset}: geometry within one display pixel of ${JSON.stringify(expected)}` });
-          for (const component of ["x", "y", "w", "h"]) {
-            assert.ok(Math.abs(actual.source[component] - expected[component]) <= 1,
-              `${component}: DOM ${actual.source[component]}, export ${expected[component]}`);
-          }
-          if (only) {
-            fixed ??= actual.screen;
-            for (const k of ["x", "y", "w", "h"]) assert.ok(Math.abs(actual.screen[k] - fixed[k]) < 0.1, `9:16 window ${k} stays fixed`);
-            firstContent ??= actual.content;
-            if (offset === 1 && expected.w < width) assert.ok(actual.content.x < firstContent.x - 1, "video moves left under the fixed window");
+      for (const framing of ["vertical_crop", "vertical_square"]) {
+        const settings = (await app.invoke("get_snapshot")).project.export_settings;
+        await app.invoke("set_export_settings", { settings: {
+          ...settings, cut_mode: "accurate", framing, output_resolution: "1080x1920",
+        } });
+        const shape = framing === "vertical_square" ? "1:1" : "9:16";
+        await waitFor(() => app.page.locator(`[data-testid="crop-overlay"][data-shape="${shape}"]`).count(), { what: `${shape} overlay` });
+        let fixed = null;
+        let firstContent = null;
+        for (const only of [false, true]) {
+          await toggle.setChecked(only);
+          for (const offset of OFFSETS) {
+            await app.invoke("edit_clips", { req: { ids: [clip.id], edit: { kind: "set_crop", crop_x_offset: offset } } });
+            const layout = await app.invoke("frame_layout", {
+              framing, display_width: width, display_height: height, offset, output_resolution: "1080x1920",
+            });
+            const expected = layout.window;
+            if (framing === "vertical_crop") {
+              // The layout's window is the §7.7 window the crop command returns.
+              assert.deepEqual(expected, await app.invoke("crop_window", { display_width: width, display_height: height, offset }));
+            }
+            await waitFor(async () => {
+              const value = await app.page.locator('[data-testid="crop-overlay"] [role="slider"]').getAttribute("aria-valuenow");
+              return Number(value) === offset && value !== null;
+            }, { timeout: 15000, what: `committed offset ${offset}` });
+            // Wait for both the state patch and the authoritative remote window to render.
+            const actual = await waitFor(async () => {
+              const result = await geometry(app, width, height);
+              return Object.keys(expected).every((k) => Math.abs(result.source[k] - expected[k]) <= 1) && result;
+            }, { timeout: 15000, what: `${file} ${framing}, only=${only}, offset=${offset}: geometry within one display pixel of ${JSON.stringify(expected)}` });
+            for (const component of ["x", "y", "w", "h"]) {
+              assert.ok(Math.abs(actual.source[component] - expected[component]) <= 1,
+                `${component}: DOM ${actual.source[component]}, export ${expected[component]}`);
+            }
+            if (only) {
+              fixed ??= actual.screen;
+              for (const k of ["x", "y", "w", "h"]) assert.ok(Math.abs(actual.screen[k] - fixed[k]) < 0.1, `${shape} window ${k} stays fixed`);
+              firstContent ??= actual.content;
+              if (offset === 1 && expected.w < width) assert.ok(actual.content.x < firstContent.x - 1, "video moves left under the fixed window");
+              if (framing === "vertical_square") {
+                // The square sits where the export puts it: full width, centred in the 9:16 frame.
+                const out = await waitFor(() => backdrop(app), { what: "blurred 9:16 frame" });
+                const k = out.w / layout.out_w;
+                assert.ok(Math.abs(out.h - layout.out_h * k) <= 1, `9:16 frame ${out.w}x${out.h}`);
+                for (const [a, b, name] of [
+                  [actual.screen.x, out.x + layout.fg.x * k, "x"], [actual.screen.y, out.y + layout.fg.y * k, "y"],
+                  [actual.screen.w, layout.fg.w * k, "w"], [actual.screen.h, layout.fg.h * k, "h"],
+                ]) assert.ok(Math.abs(a - b) <= 1, `square ${name}: screen ${a}, layout ${b}`);
+              }
+            }
           }
         }
       }

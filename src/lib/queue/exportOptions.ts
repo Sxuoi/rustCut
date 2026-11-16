@@ -18,22 +18,33 @@ import type {
   Preset,
 } from "$lib/bindings";
 
-/** The four presets of the Export dialog, in display order. */
-export const PRESETS: readonly Preset[] = ["lossless", "accurate", "vcrop", "vblur"];
+/** The presets of the Export dialog, in display order. */
+export const PRESETS: readonly Preset[] = ["lossless", "accurate", "vcrop", "vblur", "vsquare", "square"];
 
 const PRESET_MODES: Record<Preset, { cut_mode: CutMode; framing: Framing }> = {
   lossless: { cut_mode: "lossless", framing: "original" },
   accurate: { cut_mode: "accurate", framing: "original" },
   vcrop: { cut_mode: "accurate", framing: "vertical_crop" },
   vblur: { cut_mode: "accurate", framing: "vertical_blur" },
+  vsquare: { cut_mode: "accurate", framing: "vertical_square" },
+  square: { cut_mode: "accurate", framing: "square_blur" },
 };
 
 /** Mirror of `ExportSettings::preset`: Lossless ignores framing. */
 export function presetOf(s: Pick<ExportSettings, "cut_mode" | "framing">): Preset {
   if (s.cut_mode === "lossless") return "lossless";
-  if (s.framing === "vertical_crop") return "vcrop";
-  if (s.framing === "vertical_blur") return "vblur";
-  return "accurate";
+  switch (s.framing) {
+    case "vertical_crop":
+      return "vcrop";
+    case "vertical_blur":
+      return "vblur";
+    case "vertical_square":
+      return "vsquare";
+    case "square_blur":
+      return "square";
+    default:
+      return "accurate";
+  }
 }
 
 /** Mirror of `ExportSettings::apply_preset`: a vertical preset switches the cut mode (§4.5). */
@@ -41,9 +52,32 @@ export function applyPreset(s: ExportSettings, preset: Preset): ExportSettings {
   return { ...s, ...PRESET_MODES[preset] };
 }
 
-/** Vertical Crop / Vertical Blur (9:16). */
+/** 9:16 output: Vertical Crop, Vertical Blur, Square on Blur. */
 export function isVerticalPreset(p: Preset | null): boolean {
-  return p === "vcrop" || p === "vblur";
+  return p === "vcrop" || p === "vblur" || p === "vsquare";
+}
+
+/**
+ * Any framing besides the original (the 9:16 presets and Square Blur 1:1):
+ * output size, one stereo audio track (EXP-04) and platform limits (FRM-08).
+ */
+export function isFramedPreset(p: Preset | null): boolean {
+  return isVerticalPreset(p) || p === "square";
+}
+
+/** A window positioned per clip with `crop_x_offset` (Vertical Crop, Square on Blur). */
+export function hasCropWindow(p: Preset | null): boolean {
+  return p === "vcrop" || p === "vsquare";
+}
+
+/**
+ * Output size a fixed resolution choice gives under `p` (FRM-06): the 9:16
+ * sizes, or their width on both sides for Square Blur 1:1. `null` for Native.
+ */
+export function outputSize(p: Preset, r: OutputResolution): string | null {
+  if (r === "native") return null;
+  const [w, h] = r.split("x");
+  return p === "square" ? `${w}×${w}` : `${w}×${h}`;
 }
 
 /** Presets that re-encode (everything but Lossless). */

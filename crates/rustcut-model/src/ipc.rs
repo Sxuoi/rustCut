@@ -324,6 +324,39 @@ pub struct CropWindow {
     pub y: u32,
 }
 
+/// Blurred background of a framed export (FRM-05, FRM-09).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BlurBackground {
+    /// Display-frame region that is cover-scaled to fill the output.
+    pub source: CropWindow,
+    /// Size the background is blurred at (a quarter of the output, even),
+    /// before it is scaled up to the output size.
+    pub w: u32,
+    pub h: u32,
+    /// `boxblur` luma radius at that size: 10, smaller only for tiny outputs
+    /// (FFmpeg allows at most (shorter side − 1) / 2). The preview's blur follows it.
+    pub radius: u32,
+}
+
+/// Pixel layout of one framed export (FRM-04): the display-frame region shown
+/// sharp, where it lands in the output, and what feeds the blurred
+/// background. `rustcut_framing::frame_layout` computes it; the player
+/// preview and the FFmpeg chains both use it, so they cannot drift apart.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FrameLayout {
+    /// Output frame size in pixels.
+    pub out_w: u32,
+    pub out_h: u32,
+    /// Display-frame region shown sharp (the crop window, or the whole frame).
+    pub window: CropWindow,
+    /// Where `window` is drawn in the output, in output pixels.
+    pub fg: CropWindow,
+    /// `None` for Vertical Crop, which has no background.
+    pub blur: Option<BlurBackground>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct HwEncoderInfo {

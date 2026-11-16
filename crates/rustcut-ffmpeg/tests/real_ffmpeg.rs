@@ -12,7 +12,13 @@ use rustcut_ffmpeg::{
     build_export_command, hw_test_args, lossless_container, packet_index_args, parse_packet_csv,
     parse_probe_json, probe_args, verify_args,
 };
-use rustcut_model::{EncoderChoice, ExportSettings, OutputResolution, Preset, SourceInfo};
+use rustcut_framing::{
+    FramingInput, frame_layout, square_blur_filter, vertical_blur_background_crop,
+    vertical_blur_filter, vertical_square_filter,
+};
+use rustcut_model::{
+    EncoderChoice, ExportSettings, FrameLayout, Framing, OutputResolution, Preset, SourceInfo,
+};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -481,6 +487,8 @@ fn f_hdr_hlg_rotated_hevc_tonemap_and_lossless_hvc1() {
     for (p_, name) in [
         (Preset::Vcrop, "f vcrop.mp4.part"),
         (Preset::Vblur, "f vblur.mp4.part"),
+        (Preset::Vsquare, "f vsquare.mp4.part"),
+        (Preset::Square, "f square.mp4.part"),
         (Preset::Accurate, "f c.mp4.part"),
     ] {
         let mut s = preset(p_);
@@ -500,10 +508,10 @@ fn f_hdr_hlg_rotated_hevc_tonemap_and_lossless_hvc1() {
         );
         assert!(!v.hdr, "{name}");
         let dims = (v.coded_width, v.coded_height);
-        let want = if p_ == Preset::Accurate {
-            (180, 320)
-        } else {
-            (720, 1280)
+        let want = match p_ {
+            Preset::Accurate => (180, 320),
+            Preset::Square => (720, 720),
+            _ => (720, 1280),
         };
         assert_eq!(dims, want, "{name}: auto-rotation before filters");
     }
@@ -762,5 +770,363 @@ fn exp13_hardware_detection_and_export() {
             "{enc:?}"
         );
         eprintln!("{enc:?}: detection encode and vertical export succeeded");
+    }
+}
+
+/// Luma plane of the first frame of `path` (raw yuv420p, no range conversion).
+fn first_frame_luma(t: &Tools, path: &Path, w: u32, h: u32) -> Vec<u8> {
+    let o = Command::new(&t.ffmpeg)
+        .args(["-hide_banner", "-nostdin", "-v", "error", "-i"])
+        .arg(path)
+        .args([
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "yuv420p",
+            "-",
+        ])
+        .output()
+        .expect("spawn ffmpeg");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let n = (w * h) as usize;
+    assert!(o.stdout.len() >= n, "short frame: {} bytes", o.stdout.len());
+    o.stdout[..n].to_vec()
+}
+
+/// Mean luma of column `x` over rows `y0..y1`.
+fn column_mean(luma: &[u8], w: u32, x: u32, rows: std::ops::Range<u32>) -> f64 {
+    let n = rows.len() as f64;
+    rows.map(|y| f64::from(luma[(y * w + x) as usize]))
+        .sum::<f64>()
+        / n
+}
+
+/// 1 s 30 fps lossless luma ramp `20 + 210·X/W`, like the §11 ramp fixtures.
+fn ramp_source(t: &Tools, dir: &Path, w: u32, h: u32) -> SourceInfo {
+    let path = generate(
+        t,
+        dir,
+        &format!("ramp {w}x{h}.mp4"),
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            &format!(
+                "nullsrc=size={w}x{h}:rate=30:duration=1,format=yuv420p,geq=lum='20+X*210/W':cb=128:cr=128"
+            ),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-qp",
+            "0",
+        ],
+    );
+    probe(t, &path).source
+}
+
+/// Expected ramp luma at display-frame column `sx` (pixel centres).
+fn ramp_at(sx: f64, dw: u32) -> f64 {
+    20.0 + 210.0 * sx / f64::from(dw)
+}
+
+/// Compare the exported foreground and background bands with the layout:
+/// every foreground column shows the window column it maps to, and the
+/// background above it shows its (blurred) cover-source column.
+fn assert_ramp_matches_layout(name: &str, luma: &[u8], l: &FrameLayout, dw: u32) {
+    let (ow, fg) = (l.out_w, &l.fg);
+    let band = |a: u32, b: u32| (a + (b - a) / 4)..(b - (b - a) / 4);
+    let fg_rows = band(fg.y, fg.y + fg.h);
+    for x in (fg.x + fg.w / 25..fg.x + fg.w - fg.w / 25).step_by(7) {
+        let sx = f64::from(l.window.x)
+            + (f64::from(x - fg.x) + 0.5) * f64::from(l.window.w) / f64::from(fg.w)
+            - 0.5;
+        let got = column_mean(luma, ow, x, fg_rows.clone());
+        let want = ramp_at(sx, dw);
+        assert!(
+            (got - want).abs() <= 5.0,
+            "{name}: foreground column {x}: {got:.1} vs {want:.1}"
+        );
+    }
+    let blur = l.blur.as_ref().expect("blur layout");
+    assert!(fg.y >= 16, "{name}: a background band above the foreground");
+    let bg_rows = 0..fg.y;
+    for x in (ow / 6..ow - ow / 6).step_by(9) {
+        let sx = f64::from(blur.source.x)
+            + (f64::from(x) + 0.5) * f64::from(blur.source.w) / f64::from(ow)
+            - 0.5;
+        let got = column_mean(luma, ow, x, bg_rows.clone());
+        let want = ramp_at(sx, dw);
+        assert!(
+            (got - want).abs() <= 8.0,
+            "{name}: background column {x}: {got:.1} vs {want:.1}"
+        );
+    }
+}
+
+#[test]
+fn g_and_h_square_exports_match_their_layout() {
+    let t = need_ffmpeg!();
+    let dir = workdir();
+    let src = ramp_source(t, dir.path(), 640, 360);
+    let (dw, dh) = (src.video.display_width, src.video.display_height);
+    for (p_, res, offset) in [
+        (Preset::Vsquare, OutputResolution::Full1080x1920, 0.3),
+        (Preset::Vsquare, OutputResolution::Native, 0.3),
+        (Preset::Square, OutputResolution::Full1080x1920, 0.0),
+        (Preset::Square, OutputResolution::Hd720x1280, 0.0),
+    ] {
+        let mut s = preset(p_);
+        s.output_resolution = res;
+        // export() always uses crop_x_offset 0.3.
+        let l = frame_layout(p_.framing(), dw, dh, offset, res).unwrap();
+        let name = format!("{p_:?} {res:?}");
+        let out = dir
+            .path()
+            .join(format!("{} {:?}.mp4.part", p_.as_str(), res));
+        let p = export(t, &src, &s, (0.0, 0.5), &out, ResolvedEncoder::Libx264);
+        let v = &p.source.video;
+        assert_eq!(
+            (v.coded_width, v.coded_height),
+            (l.out_w, l.out_h),
+            "{name}"
+        );
+        assert_eq!(
+            (v.sar.as_str(), v.pix_fmt.as_deref()),
+            ("1:1", Some("yuv420p")),
+            "{name}"
+        );
+        let luma = first_frame_luma(t, &out, l.out_w, l.out_h);
+        assert_ramp_matches_layout(&name, &luma, &l, dw);
+    }
+}
+
+/// Chains E, G and H with the upscaled background painted black and a white
+/// source: the white rectangle FFmpeg draws must be exactly the layout's
+/// foreground. For chain E this checks that `frame_layout` reproduces
+/// FFmpeg's runtime `force_original_aspect_ratio` and `overlay` rounding; for
+/// G and H that the stacked bands and the window tile the output as intended
+/// (one band, two bands, no band when the window fills the output).
+#[test]
+fn blur_chains_place_the_foreground_where_the_layout_says() {
+    let t = need_ffmpeg!();
+    let dir = workdir();
+    let frames = [
+        (1920, 1080),
+        (1440, 1080),
+        (2560, 1080),
+        (1080, 1080),
+        (1080, 1920),
+        (1080, 2340),
+        (768, 576),
+        (1280, 720),
+        (854, 480),
+        (1000, 700),
+        (3840, 2160),
+        (1080, 1078),
+    ];
+    let resolutions = [
+        OutputResolution::Full1080x1920,
+        OutputResolution::Hd720x1280,
+        OutputResolution::Native,
+    ];
+    let mut checked = 0;
+    for (dw, dh) in frames {
+        for res in resolutions {
+            let input = FramingInput {
+                display_w: dw,
+                display_h: dh,
+                normalize_sar: false,
+                fps_cap: None,
+                tonemap_hdr: false,
+                output: res,
+                color_primaries: None,
+                color_trc: None,
+            };
+            for (framing, chain) in [
+                (Framing::VerticalBlur, vertical_blur_filter(&input)),
+                (Framing::VerticalSquare, vertical_square_filter(&input, 0.3)),
+                (Framing::SquareBlur, square_blur_filter(&input)),
+            ] {
+                let l = frame_layout(framing, dw, dh, 0.3, res).unwrap();
+                // The one plain upscale to the output size is the background's.
+                let upscale = format!("scale={}:{},setsar=1", l.out_w, l.out_h);
+                // Chains G and H drop the background when the window fills the output;
+                // chain E always keeps its branch.
+                let fills = (l.fg.w, l.fg.h) == (l.out_w, l.out_h);
+                let has_bg = framing == Framing::VerticalBlur || !fills;
+                assert_eq!(
+                    chain.matches(&upscale).count(),
+                    usize::from(has_bg),
+                    "{chain}"
+                );
+                let graph =
+                    chain.replacen(&upscale, &format!("{upscale},lutyuv=y=16:u=128:v=128"), 1);
+                let out = dir
+                    .path()
+                    .join(format!("place {framing:?} {dw}x{dh} {res:?}.y4m"));
+                let o = Command::new(&t.ffmpeg)
+                    .args([
+                        "-hide_banner",
+                        "-nostdin",
+                        "-y",
+                        "-v",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                    ])
+                    .arg(format!("color=c=white:s={dw}x{dh}:r=1:d=1"))
+                    .args([
+                        "-filter_complex",
+                        &graph,
+                        "-map",
+                        "[vout]",
+                        "-frames:v",
+                        "1",
+                    ])
+                    .arg(&out)
+                    .output()
+                    .expect("spawn ffmpeg");
+                assert!(
+                    o.status.success(),
+                    "{graph}: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                let luma = first_frame_luma(t, &out, l.out_w, l.out_h);
+                let bright = |x: u32, y: u32| luma[(y * l.out_w + x) as usize] > 128;
+                let cols: Vec<u32> = (0..l.out_w)
+                    .filter(|x| (0..l.out_h).any(|y| bright(*x, y)))
+                    .collect();
+                let rows: Vec<u32> = (0..l.out_h)
+                    .filter(|y| (0..l.out_w).any(|x| bright(x, *y)))
+                    .collect();
+                let found = (
+                    cols[0],
+                    rows[0],
+                    cols[cols.len() - 1] + 1 - cols[0],
+                    rows[rows.len() - 1] + 1 - rows[0],
+                );
+                assert_eq!(
+                    found,
+                    (l.fg.x, l.fg.y, l.fg.w, l.fg.h),
+                    "{framing:?} {dw}x{dh} {res:?}: FFmpeg's foreground (x, y, w, h)"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, frames.len() * resolutions.len() * 3);
+}
+
+/// Native outputs of tiny sources make backgrounds too small for
+/// `boxblur=10:2`; the chains then pass radii FFmpeg accepts.
+#[test]
+fn tiny_native_outputs_export() {
+    let t = need_ffmpeg!();
+    let dir = workdir();
+    for (w, h) in [(128, 128), (160, 90)] {
+        let path = generate(
+            t,
+            dir.path(),
+            &format!("tiny {w}x{h}.mp4"),
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc2=size={w}x{h}:rate=30:duration=1"),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+            ],
+        );
+        let src = probe(t, &path).source;
+        for p_ in [Preset::Vblur, Preset::Vsquare, Preset::Square] {
+            let mut s = preset(p_);
+            s.output_resolution = OutputResolution::Native;
+            let l = frame_layout(p_.framing(), w, h, 0.3, OutputResolution::Native).unwrap();
+            let out = dir
+                .path()
+                .join(format!("tiny {w}x{h} {}.mp4.part", p_.as_str()));
+            let p = export(t, &src, &s, (0.0, 0.5), &out, ResolvedEncoder::Libx264);
+            assert_eq!(
+                (p.source.video.coded_width, p.source.video.coded_height),
+                (l.out_w, l.out_h),
+                "{w}x{h} {p_:?}"
+            );
+        }
+    }
+}
+
+/// Chain E keeps `scale=BW:BH:force_original_aspect_ratio=increase,crop=BW:BH`.
+/// `vertical_blur_background_crop` must name exactly what FFmpeg resolves it
+/// to, so the preview samples the same region: the runtime form and the
+/// literal one produce bit-identical frames.
+#[test]
+fn chain_e_cover_crop_resolves_as_the_layout_says() {
+    let t = need_ffmpeg!();
+    let frames = [
+        (1920, 1080),
+        (1280, 720),
+        (1440, 1080),
+        (2560, 1080),
+        (1080, 1920),
+        (1080, 2340),
+        (768, 576),
+        (854, 480),
+        (1000, 700),
+        (160, 90),
+    ];
+    let md5 = |dw: u32, dh: u32, vf: &str| -> String {
+        let o = Command::new(&t.ffmpeg)
+            .args([
+                "-hide_banner",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg(format!("testsrc2=size={dw}x{dh}:rate=10:duration=0.3"))
+            .args([
+                "-vf",
+                &format!("format=yuv420p,{vf}"),
+                "-f",
+                "framemd5",
+                "-",
+            ])
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            o.status.success(),
+            "{vf}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    for (dw, dh) in frames {
+        for res in [
+            OutputResolution::Full1080x1920,
+            OutputResolution::Hd720x1280,
+            OutputResolution::Native,
+        ] {
+            let l = frame_layout(Framing::VerticalBlur, dw, dh, 0.0, res).unwrap();
+            let b = l.blur.expect("background");
+            let (sw, sh, cx, cy) = vertical_blur_background_crop(dw, dh, b.w, b.h);
+            let runtime = format!(
+                "scale={0}:{1}:force_original_aspect_ratio=increase,crop={0}:{1}",
+                b.w, b.h
+            );
+            let literal = format!("scale={sw}:{sh},crop={}:{}:{cx}:{cy}", b.w, b.h);
+            assert_eq!(
+                md5(dw, dh, &runtime),
+                md5(dw, dh, &literal),
+                "{dw}x{dh} {res:?}: {literal}"
+            );
+        }
     }
 }

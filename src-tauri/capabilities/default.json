@@ -31,6 +31,7 @@
     "allow-set-view-state",
     "allow-save-now",
     "allow-crop-window",
+    "allow-frame-layout",
     "allow-preview-export",
     "allow-start-export",
     "allow-cancel-export",

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExportSettings, SaveState } from "$lib/bindings";
 import common from "$lib/i18n/en/common";
-import { applyPreset, basename, formatBytes, formatSaveState, isVerticalCrop, PRESETS, presetLabelKey, presetOf, stem } from "./format";
+import { applyPreset, basename, formatBytes, formatSaveState, hasCropWindow, isFramed, PRESETS, presetLabelKey, presetOf, stem } from "./format";
 
 const base = {
   output_dir: null,
@@ -23,6 +23,8 @@ describe("presets", () => {
     const lossless = applyPreset(base, "lossless");
     expect(applyPreset(lossless, "vcrop")).toMatchObject({ cut_mode: "accurate", framing: "vertical_crop" });
     expect(applyPreset(lossless, "vblur")).toMatchObject({ cut_mode: "accurate", framing: "vertical_blur" });
+    expect(applyPreset(lossless, "vsquare")).toMatchObject({ cut_mode: "accurate", framing: "vertical_square" });
+    expect(applyPreset(lossless, "square")).toMatchObject({ cut_mode: "accurate", framing: "square_blur" });
     expect(applyPreset(lossless, "accurate")).toMatchObject({ cut_mode: "accurate", framing: "original" });
   });
 
@@ -37,9 +39,12 @@ describe("presets", () => {
       expect(presetOf(applyPreset(base, p))).toBe(p);
       expect(common[presetLabelKey(p)]).toBeTruthy();
     }
-    expect(isVerticalCrop(applyPreset(base, "vcrop"))).toBe(true);
-    expect(isVerticalCrop(applyPreset(base, "vblur"))).toBe(false);
-    expect(isVerticalCrop(null)).toBe(false);
+    expect(PRESETS).toHaveLength(6);
+    const crop = PRESETS.filter((p) => hasCropWindow(applyPreset(base, p)));
+    expect(crop).toEqual(["vcrop", "vsquare"]);
+    const framed = PRESETS.filter((p) => isFramed(applyPreset(base, p)));
+    expect(framed).toEqual(["vcrop", "vblur", "vsquare", "square"]);
+    expect(hasCropWindow(null) || isFramed(null)).toBe(false);
   });
 
   it("a lossless cut mode wins over a stray vertical framing", () => {

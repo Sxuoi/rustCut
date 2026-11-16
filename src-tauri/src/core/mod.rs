@@ -14,9 +14,10 @@ use std::time::Duration;
 
 use rustcut_model::{
     APP_VERSION, AddClipRequest, AddClipResult, AppEvent, AppInfo, AppSettings, CommandError,
-    CropWindow, EditClipsRequest, ErrorCode, ExportSettings, HwEncoderInfo, ImportPreview,
-    ImportedClip, MediaIndexInfo, Notice, NoticeLevel, ProjectSnapshot, RecentProject,
-    SCHEMA_VERSION, SaveState, StatePatch, Tag, TimestampExport, TimestampFormat, ViewState,
+    CropWindow, EditClipsRequest, ErrorCode, ExportSettings, FrameLayout, Framing, HwEncoderInfo,
+    ImportPreview, ImportedClip, MediaIndexInfo, Notice, NoticeLevel, ProjectSnapshot,
+    RecentProject, SCHEMA_VERSION, SaveState, StatePatch, Tag, TimestampExport, TimestampFormat,
+    ViewState,
 };
 use rustcut_project::{ProjectStore, RecentStore, StoreError, StoreOptions};
 use rustcut_runner::{Capabilities, Sidecars, probe_capabilities};
@@ -288,6 +289,19 @@ impl AppCore {
     /// `crop_window` (FRM-04).
     pub fn crop_window(&self, display_width: u32, display_height: u32, offset: f64) -> CropWindow {
         rustcut_framing::crop_window(display_width, display_height, offset)
+    }
+
+    /// `frame_layout` (FRM-04, FRM-09): what the export of `framing` shows and
+    /// where, for the preview. `None` for the original framing.
+    pub fn frame_layout(
+        &self,
+        framing: Framing,
+        display_width: u32,
+        display_height: u32,
+        offset: f64,
+        output: rustcut_model::OutputResolution,
+    ) -> Option<FrameLayout> {
+        rustcut_framing::frame_layout(framing, display_width, display_height, offset, output)
     }
 
     /// Write `text` to `path` (the save dialog's result) for `save_text_file`.

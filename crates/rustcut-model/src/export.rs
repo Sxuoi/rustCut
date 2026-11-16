@@ -24,9 +24,28 @@ pub enum Framing {
     Original,
     VerticalCrop,
     VerticalBlur,
+    /// FRM-09: a 1:1 window of the frame, centred on a blurred 9:16 background.
+    VerticalSquare,
+    /// FRM-09: square 1:1 output, the whole frame over a blurred background.
+    SquareBlur,
 }
 
-/// The four presets of the Export dialog; also the `{preset}` naming variable.
+impl Framing {
+    /// A window the user positions per clip with `crop_x_offset` (FRM-03).
+    pub fn uses_crop_offset(self) -> bool {
+        matches!(self, Framing::VerticalCrop | Framing::VerticalSquare)
+    }
+
+    /// The output has a blurred background (chains E, G and H).
+    pub fn has_blur(self) -> bool {
+        matches!(
+            self,
+            Framing::VerticalBlur | Framing::VerticalSquare | Framing::SquareBlur
+        )
+    }
+}
+
+/// The presets of the Export dialog; also the `{preset}` naming variable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -35,14 +54,20 @@ pub enum Preset {
     Accurate,
     Vcrop,
     Vblur,
+    /// Square on Blur 9:16 (FRM-09).
+    Vsquare,
+    /// Square Blur 1:1 (FRM-09).
+    Square,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 4] = [
+    pub const ALL: [Preset; 6] = [
         Preset::Lossless,
         Preset::Accurate,
         Preset::Vcrop,
         Preset::Vblur,
+        Preset::Vsquare,
+        Preset::Square,
     ];
 
     /// `{preset}` value (EXP-05).
@@ -52,6 +77,8 @@ impl Preset {
             Preset::Accurate => "accurate",
             Preset::Vcrop => "vcrop",
             Preset::Vblur => "vblur",
+            Preset::Vsquare => "vsquare",
+            Preset::Square => "square",
         }
     }
 
@@ -61,6 +88,8 @@ impl Preset {
             Preset::Accurate => "Frame-Accurate (Original)",
             Preset::Vcrop => "Vertical Crop 9:16",
             Preset::Vblur => "Vertical Blur 9:16",
+            Preset::Vsquare => "Square on Blur 9:16",
+            Preset::Square => "Square Blur 1:1",
         }
     }
 
@@ -77,11 +106,31 @@ impl Preset {
             Preset::Lossless | Preset::Accurate => Framing::Original,
             Preset::Vcrop => Framing::VerticalCrop,
             Preset::Vblur => Framing::VerticalBlur,
+            Preset::Vsquare => Framing::VerticalSquare,
+            Preset::Square => Framing::SquareBlur,
         }
     }
 
+    /// 9:16 output (Vertical Crop, Vertical Blur, Square on Blur).
     pub fn is_vertical(self) -> bool {
-        matches!(self, Preset::Vcrop | Preset::Vblur)
+        matches!(self, Preset::Vcrop | Preset::Vblur | Preset::Vsquare)
+    }
+
+    /// Any framing besides the original: the vertical presets and Square Blur
+    /// 1:1. They share the output size (FRM-06), one stereo audio track
+    /// (EXP-04) and the platform limits (FRM-08).
+    pub fn is_framed(self) -> bool {
+        self.framing() != Framing::Original
+    }
+
+    /// The clip's `crop_x_offset` changes the output (FRM-03).
+    pub fn uses_crop_offset(self) -> bool {
+        self.framing().uses_crop_offset()
+    }
+
+    /// The video chain ends in a blurred-background composite (E, G, H).
+    pub fn has_blur(self) -> bool {
+        self.framing().has_blur()
     }
 
     pub fn is_reencode(self) -> bool {
@@ -89,7 +138,9 @@ impl Preset {
     }
 }
 
-/// FRM-06 output resolution for vertical presets.
+/// FRM-06 output resolution of the framed presets. The values name the 9:16
+/// sizes; Square Blur 1:1 uses their width for both sides (1080×1080,
+/// 720×720), so one setting serves every framed preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum OutputResolution {
@@ -104,13 +155,18 @@ pub enum OutputResolution {
 }
 
 impl OutputResolution {
-    /// Fixed output size, or `None` for Native.
+    /// Fixed 9:16 output size, or `None` for Native.
     pub fn dims(self) -> Option<(u32, u32)> {
         match self {
             OutputResolution::Full1080x1920 => Some((1080, 1920)),
             OutputResolution::Hd720x1280 => Some((720, 1280)),
             OutputResolution::Native => None,
         }
+    }
+
+    /// Fixed 1:1 output size (Square Blur 1:1), or `None` for Native.
+    pub fn square_dims(self) -> Option<(u32, u32)> {
+        self.dims().map(|(w, _)| (w, w))
     }
 }
 
@@ -239,6 +295,8 @@ impl ExportSettings {
             (CutMode::Accurate, Framing::Original) => Preset::Accurate,
             (CutMode::Accurate, Framing::VerticalCrop) => Preset::Vcrop,
             (CutMode::Accurate, Framing::VerticalBlur) => Preset::Vblur,
+            (CutMode::Accurate, Framing::VerticalSquare) => Preset::Vsquare,
+            (CutMode::Accurate, Framing::SquareBlur) => Preset::Square,
         }
     }
 
@@ -299,7 +357,7 @@ impl ExportSettings {
             Preset::Accurate => {
                 s.push_str(&format!(";fps={:?};enc={:?}", self.fps_cap, self.encoder));
             }
-            Preset::Vcrop | Preset::Vblur => {
+            Preset::Vcrop | Preset::Vblur | Preset::Vsquare | Preset::Square => {
                 s.push_str(&format!(
                     ";res={:?};fps={:?};enc={:?};a={};mix={}",
                     self.output_resolution,
@@ -338,6 +396,16 @@ mod tests {
             "vertical_crop"
         );
         assert_eq!(serde_json::to_value(Preset::Vblur).unwrap(), "vblur");
+        assert_eq!(
+            serde_json::to_value(Framing::VerticalSquare).unwrap(),
+            "vertical_square"
+        );
+        assert_eq!(
+            serde_json::to_value(Framing::SquareBlur).unwrap(),
+            "square_blur"
+        );
+        assert_eq!(serde_json::to_value(Preset::Vsquare).unwrap(), "vsquare");
+        assert_eq!(serde_json::to_value(Preset::Square).unwrap(), "square");
     }
 
     #[test]
@@ -349,5 +417,58 @@ mod tests {
         s.cut_mode = CutMode::Lossless;
         assert_eq!(s.preset(), Preset::Lossless);
         assert_eq!(s.normalized().framing, Framing::Original);
+    }
+
+    #[test]
+    fn every_preset_round_trips_through_its_settings() {
+        for p in Preset::ALL {
+            let mut s = ExportSettings::default();
+            s.apply_preset(p);
+            assert_eq!(s.preset(), p, "{p:?}");
+            assert_eq!(s.normalized().preset(), p, "{p:?} survives normalisation");
+        }
+    }
+
+    #[test]
+    fn square_presets_classification() {
+        assert!(Preset::Vsquare.is_vertical() && Preset::Vsquare.is_framed());
+        assert!(!Preset::Square.is_vertical() && Preset::Square.is_framed());
+        assert!(!Preset::Accurate.is_framed() && !Preset::Lossless.is_framed());
+        let crop: Vec<Preset> = Preset::ALL
+            .into_iter()
+            .filter(|p| p.uses_crop_offset())
+            .collect();
+        assert_eq!(crop, [Preset::Vcrop, Preset::Vsquare]);
+        let blur: Vec<Preset> = Preset::ALL.into_iter().filter(|p| p.has_blur()).collect();
+        assert_eq!(blur, [Preset::Vblur, Preset::Vsquare, Preset::Square]);
+        assert_eq!(OutputResolution::Hd720x1280.square_dims(), Some((720, 720)));
+        assert_eq!(OutputResolution::Native.square_dims(), None);
+    }
+
+    #[test]
+    fn existing_signatures_are_unchanged_and_new_presets_have_their_own() {
+        let mut s = ExportSettings::default();
+        s.apply_preset(Preset::Vblur);
+        assert_eq!(
+            s.output_signature(),
+            "p=vblur;dir=;tpl={index}_{name};sp=true;res=Full1080x1920;fps=Some(60);enc=Auto;a=1;mix=false"
+        );
+        s.apply_preset(Preset::Vsquare);
+        assert!(s.output_signature().starts_with("p=vsquare;"));
+        s.apply_preset(Preset::Square);
+        assert!(s.output_signature().starts_with("p=square;"));
+        assert!(s.output_signature().contains(";res=Full1080x1920;"));
+    }
+
+    #[test]
+    fn project_settings_with_the_new_framings_parse() {
+        let mut v = serde_json::to_value(ExportSettings::default()).unwrap();
+        v["cut_mode"] = "accurate".into();
+        v["framing"] = "vertical_square".into();
+        let s: ExportSettings = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(s.preset(), Preset::Vsquare);
+        v["framing"] = "square_blur".into();
+        let s: ExportSettings = serde_json::from_value(v).unwrap();
+        assert_eq!(s.preset(), Preset::Square);
     }
 }

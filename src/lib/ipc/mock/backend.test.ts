@@ -311,6 +311,15 @@ describe("app, settings, dialogs", () => {
     expect(await b.cropWindow(1920, 1080, 1)).toMatchObject({ x: 1312 });
   });
 
+  it("frame_layout uses the FRM-09 port", async () => {
+    const { b } = setup();
+    expect(await b.frameLayout("original", 1920, 1080, 0, "1080x1920")).toBeNull();
+    const sq = await b.frameLayout("vertical_square", 1920, 1080, 0, "1080x1920");
+    expect(sq).toMatchObject({ out_w: 1080, out_h: 1920, window: { w: 1080, x: 420 }, fg: { w: 1080, h: 1080, y: 420 } });
+    const flat = await b.frameLayout("square_blur", 1920, 1080, 0, "720x1280");
+    expect(flat).toMatchObject({ out_w: 720, out_h: 720, fg: { w: 720, h: 406, x: 0, y: 156 } });
+  });
+
   it("media_url serves the sample for every path", () => {
     const { b } = setup();
     expect(b.mediaUrl("/sample/sample.mp4")).toBe("/sample/sample.mp4");

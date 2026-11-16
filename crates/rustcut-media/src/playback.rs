@@ -491,6 +491,7 @@ mod tests {
                 profile: Some("High".into()),
                 level: Some(40),
                 color_transfer: None,
+                color_primaries: None,
                 bit_depth: Some(8),
             },
             audio_tracks: audio

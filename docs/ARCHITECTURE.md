@@ -10,7 +10,7 @@ comments and tests so every requirement is traceable.
 Cargo.toml                workspace (edition 2024, resolver 3)
 crates/
   rustcut-model           schema v2 + IPC DTOs (ts-rs → src/lib/bindings), time, fingerprint   [done]
-  rustcut-framing         §7.7 crop window, chains C/D/E/F                                     [done]
+  rustcut-framing         §7.7 9:16 and 1:1 windows, frame_layout, chains C–H                  [done]
   rustcut-naming          EXP-05/06/07 naming, sanitization, collisions; EXP-16/17 timestamps
   rustcut-ffmpeg          PURE: argv builders A–F, -progress parser, ffprobe/packet parsers,
                           EXP-03 container rules, EXP-11 estimates, stderr classification, HW args
@@ -97,6 +97,7 @@ All commands: `#[tauri::command(rename_all = "snake_case")]`, return
 | `set_view_state` | `view: ViewState` | `()` (saved, not undoable, no patch) |
 | `save_now` | – | `SaveState` |
 | `crop_window` | `display_width, display_height: u32, offset: f64` | `CropWindow` (FRM-04) |
+| `frame_layout` | `framing: Framing, display_width, display_height: u32, offset: f64, output_resolution: OutputResolution` | `Option<FrameLayout>` (`None` for the original framing) (FRM-04, FRM-09): output size, sharp window, its place in the output, blurred background source; the player preview and chains D, G and H use it |
 | `preview_export` | `clip_ids, settings` | `PreflightReport` (names, checks, estimate) |
 | `start_export` | `clip_ids, settings` | `BatchInfo` (fails with `Busy` if running, `InvalidInput` if pre-flight has errors) |
 | `cancel_export` | `clip_id: Option<Uuid>` | `()` (None = cancel all) |

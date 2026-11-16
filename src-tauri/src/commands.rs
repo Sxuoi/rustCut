@@ -9,10 +9,10 @@ use std::sync::atomic::AtomicBool;
 
 use rustcut_model::{
     AddClipRequest, AddClipResult, AppEvent, AppInfo, AppSettings, BatchInfo, CommandError,
-    CropWindow, EditClipsRequest, ExportSettings, HwEncoderInfo, ImportPreview, ImportedClip,
-    MediaIndexInfo, OpenResult, PlatformPreset, PlaybackInfo, PlaybackTier, PreflightReport,
-    ProjectSnapshot, RecentProject, RelinkResult, SaveState, StatePatch, Tag, TimestampExport,
-    TimestampFormat, ViewState,
+    CropWindow, EditClipsRequest, ExportSettings, FrameLayout, Framing, HwEncoderInfo,
+    ImportPreview, ImportedClip, MediaIndexInfo, OpenResult, OutputResolution, PlatformPreset,
+    PlaybackInfo, PlaybackTier, PreflightReport, ProjectSnapshot, RecentProject, RelinkResult,
+    SaveState, StatePatch, Tag, TimestampExport, TimestampFormat, ViewState,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
@@ -233,6 +233,25 @@ pub fn crop_window(
     Ok(state
         .core
         .crop_window(display_width, display_height, offset))
+}
+
+/// FRM-04 / FRM-09 preview layout of a framed preset (`None` for Original).
+#[tauri::command(rename_all = "snake_case")]
+pub fn frame_layout(
+    state: State<'_, AppState>,
+    framing: Framing,
+    display_width: u32,
+    display_height: u32,
+    offset: f64,
+    output_resolution: OutputResolution,
+) -> Res<Option<FrameLayout>> {
+    Ok(state.core.frame_layout(
+        framing,
+        display_width,
+        display_height,
+        offset,
+        output_resolution,
+    ))
 }
 
 /// Pre-flight report.

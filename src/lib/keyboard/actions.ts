@@ -10,7 +10,7 @@
 import type { AddClipRequest, AddClipResult, Clip, ClipEdit, ExportSettings, NoticeLevel, ReadOnlyReason } from "$lib/bindings";
 import { t } from "$lib/i18n";
 import { timelineMessageKeys } from "$lib/timeline/messages";
-import { isVerticalCrop } from "$lib/components/shell/format";
+import { hasCropWindow } from "$lib/components/shell/format";
 import { markTarget, resolveAdd, resolveRetime, setMark, type MarkSide, type PendingMarks } from "$lib/util/marks";
 import type { ActionId } from "./shortcuts";
 
@@ -275,7 +275,7 @@ export function createActions(deps: ActionDeps): Actions {
 
   function nudgeCrop(delta: number, repeat: boolean): void {
     if (!project.loaded) return;
-    if (!isVerticalCrop(project.settings)) {
+    if (!hasCropWindow(project.settings)) {
       if (!repeat) ui.info(t("kb.cropOnlyVertical"), "crop_not_vertical");
       return;
     }

@@ -30,6 +30,7 @@ pub(crate) fn source(format: &str, path: &str, video: &str, audio: &[&str]) -> S
             profile: None,
             level: None,
             color_transfer: None,
+            color_primaries: None,
             bit_depth: Some(8),
         },
         audio_tracks: audio

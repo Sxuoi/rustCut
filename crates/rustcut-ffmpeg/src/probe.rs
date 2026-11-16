@@ -203,6 +203,7 @@ fn video_info(s: &Value) -> Option<VideoInfo> {
         rustcut_framing::display_dims(width, height, sar, rotation);
     let (frame_rate, vfr) = frame_rate(s);
     let color_transfer = text(s, "color_transfer").map(str::to_string);
+    let color_primaries = text(s, "color_primaries").map(str::to_string);
     let pix_fmt = text(s, "pix_fmt").map(str::to_string);
     Some(VideoInfo {
         codec: text(s, "codec_name").unwrap_or("unknown").to_string(),
@@ -226,6 +227,7 @@ fn video_info(s: &Value) -> Option<VideoInfo> {
             .filter(|l| *l > 0)
             .and_then(|l| i32::try_from(l).ok()),
         color_transfer,
+        color_primaries,
     })
 }
 

@@ -6,6 +6,8 @@
 //! | Frame-Accurate (C) | libx264 CRF 18, `-vf` only for a frame-rate cap or chain F | every track → AAC 192k |
 //! | Vertical Crop (D) | `-vf` chain D, CRF 20, 16M/32M cap | the chosen track → AAC 192k stereo, or *Mix all* |
 //! | Vertical Blur (E) | `-filter_complex` chain E, CRF 20, 16M/32M cap | as D |
+//! | Square on Blur (G) | `-filter_complex` chain G, CRF 20, 16M/32M cap | as D |
+//! | Square Blur 1:1 (H) | `-filter_complex` chain H, CRF 20, 16M/32M cap | as D |
 //!
 //! Chains come from `rustcut_framing` (the same functions the preview
 //! overlay uses, FRM-04). HDR sources get chain F and BT.709 tags when
@@ -21,7 +23,8 @@ use crate::args::{
 use crate::compat::{ContainerDecision, LosslessAudio, unsupported_audio_indices};
 use crate::hw::hw_video_args;
 use rustcut_framing::{
-    BLUR_OUTPUT_LABEL, FramingInput, original_filter, vertical_blur_filter, vertical_crop_filter,
+    BLUR_OUTPUT_LABEL, FramingInput, original_filter, square_blur_filter, vertical_blur_filter,
+    vertical_crop_filter, vertical_square_filter,
 };
 use rustcut_model::{EncoderChoice, ExportSettings, Preset, SourceInfo};
 use std::path::Path;
@@ -47,7 +50,7 @@ pub struct JobSpec<'a> {
     pub start_sec: f64,
     /// Clip Out (exclusive: the last frame before Out is the last frame).
     pub end_sec: f64,
-    /// FRM-03 crop position, −1…+1 (Vertical Crop only).
+    /// FRM-03 crop position, −1…+1 (Vertical Crop and Square on Blur).
     pub crop_x_offset: f64,
     pub settings: &'a ExportSettings,
     /// From [`crate::compat::lossless_container`] (used by Lossless).
@@ -73,7 +76,9 @@ pub fn build_export_command(job: &JobSpec<'_>) -> ExportCommand {
     let (start_sec, end_sec) = clip_range(job, preset);
     let (muxer, video, audio, faststart) = match preset {
         Preset::Lossless => lossless_plan(job),
-        Preset::Accurate | Preset::Vcrop | Preset::Vblur => reencode_plan(job, preset),
+        Preset::Accurate | Preset::Vcrop | Preset::Vblur | Preset::Vsquare | Preset::Square => {
+            reencode_plan(job, preset)
+        }
     };
     ExportCommand {
         input: job.input.as_os_str().to_os_string(),
@@ -135,13 +140,18 @@ fn reencode_plan(job: &JobSpec<'_>, preset: Preset) -> Plan {
             ))),
             Some(OUTPUT_PIX_FMT),
         ),
-        Preset::Vblur => (
+        Preset::Vblur | Preset::Vsquare | Preset::Square => (
             CRF_VERTICAL,
             Some((VERTICAL_MAXRATE_BPS, VERTICAL_BUFSIZE_BITS)),
             Some(VideoFilter::Complex {
-                graph: vertical_blur_filter(&framing),
+                graph: match preset {
+                    Preset::Vsquare => vertical_square_filter(&framing, job.crop_x_offset),
+                    Preset::Square => square_blur_filter(&framing),
+                    _ => vertical_blur_filter(&framing),
+                },
                 out_label: BLUR_OUTPUT_LABEL.to_string(),
             }),
+            // The blur chains end in format=yuv420p.
             None,
         ),
         _ => (
@@ -167,9 +177,10 @@ fn reencode_plan(job: &JobSpec<'_>, preset: Preset) -> Plan {
     if let ResolvedEncoder::Hardware(choice) = job.encoder {
         apply_hardware(&mut enc, choice, crf, cap, preset);
     }
-    let audio = match preset {
-        Preset::Vcrop | Preset::Vblur => vertical_audio(job.source, job.settings),
-        _ => AudioPlan::AacAll { kbps: AAC_KBPS },
+    let audio = if preset.is_framed() {
+        vertical_audio(job.source, job.settings)
+    } else {
+        AudioPlan::AacAll { kbps: AAC_KBPS }
     };
     (Muxer::Mp4, VideoPlan::Encode(enc), audio, true)
 }
@@ -194,9 +205,9 @@ fn apply_hardware(
     enc.bufsize_bits = None;
     enc.threads = None;
     enc.hw_device_args = hw.device_args;
-    // Chain E already ends in format=yuv420p; only a different format matters.
-    enc.pix_fmt = match (preset, hw.pix_fmt) {
-        (Preset::Vblur, Some(OUTPUT_PIX_FMT)) => None,
+    // The blur chains already end in format=yuv420p; only a different format matters.
+    enc.pix_fmt = match (preset.has_blur(), hw.pix_fmt) {
+        (true, Some(OUTPUT_PIX_FMT)) => None,
         (_, pix) => pix.map(str::to_string),
     };
     if let Some(suffix) = hw.filter_suffix {
@@ -214,7 +225,7 @@ fn apply_hardware(
     }
 }
 
-/// EXP-04 vertical presets: the chosen track (1-based setting, default 1)
+/// EXP-04 framed presets: the chosen track (1-based setting, default 1)
 /// downmixed to stereo, or *Mix all tracks* when there are at least two. A
 /// track number beyond the source's tracks falls back to the first track
 /// rather than silently exporting without sound.

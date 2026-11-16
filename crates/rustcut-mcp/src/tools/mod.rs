@@ -26,7 +26,9 @@ Clips must be at least the minimum duration (0.5 s by default) and inside the vi
 stay stable: use them in update_clip, delete_clips and export indices.
 Presets: lossless = fast stream copy, original quality, starts at the nearest earlier keyframe; \
 accurate = re-encode, frame-exact cut, original framing; vertical_crop = 9:16 crop of the video (set crop_offset -1..1 \
-to move the crop left/right); vertical_blur = 9:16 with the full video over a blurred background (best for TikTok/Shorts when nothing may be cut off).
+to move the crop left/right); vertical_blur = 9:16 with the full video over a blurred background (best for TikTok/Shorts when nothing may be cut off); \
+vertical_square = 9:16 with a square (1:1) crop of the video in the middle over a blurred background (crop_offset moves the square); \
+square_blur = square 1:1 file with the full video over a blurred background (feed posts).
 Existing files are never overwritten unless on_conflict=\"overwrite\". Export options you pass (naming_template, resolution, on_conflict, ...) apply to that call only and are not saved; omitted options use the defaults shown in the tool description. The clips are stored in the same project \
 file as the RustCut desktop app: open the video there to see, edit and export the same clips. \
 If a tool says the project is open in RustCut, close it there and retry.
@@ -220,15 +222,15 @@ fn tool(
 fn export_props() -> Value {
     json!({
         "path": path_prop(),
-        "preset": {"type": "string", "enum": ["lossless", "accurate", "vertical_crop", "vertical_blur"],
-            "description": "lossless (default): fast copy, original quality, starts at the nearest earlier keyframe. accurate: re-encode, frame-exact, original framing. vertical_crop: 9:16 crop. vertical_blur: 9:16 full frame over a blurred background."},
+        "preset": {"type": "string", "enum": ["lossless", "accurate", "vertical_crop", "vertical_blur", "vertical_square", "square_blur"],
+            "description": "lossless (default): fast copy, original quality, starts at the nearest earlier keyframe. accurate: re-encode, frame-exact, original framing. vertical_crop: 9:16 crop. vertical_blur: 9:16 full frame over a blurred background. vertical_square: 9:16 with a 1:1 crop centred over a blurred background. square_blur: 1:1 file, full frame over a blurred background."},
         "indices": {"type": "array", "items": {"type": "integer", "minimum": 1},
             "description": "Clip numbers to export (default: all included clips)."},
         "output_dir": {"type": "string", "description": "Absolute output folder (default: <video folder>/<video name>_clips)."},
         "naming_template": {"type": "string", "description": "File name template, default \"{index}_{name}\". Variables: {index} {name} {source} {tag} {start} {end} {duration} {date}."},
-        "resolution": {"type": "string", "enum": ["1080x1920", "720x1280", "native"], "description": "Output size for the vertical presets (default 1080x1920)."},
+        "resolution": {"type": "string", "enum": ["1080x1920", "720x1280", "native", "1080x1080", "720x720"], "description": "Output size for the framed presets (default 1080x1920). square_blur makes 1080x1080 or 720x720 from the same choice; 1080x1080 and 720x720 are accepted as aliases."},
         "crop_offset": {"type": "number", "minimum": -1, "maximum": 1,
-            "description": "Horizontal crop position for vertical_crop: -1 = left edge, 0 = centre, 1 = right edge. Applied to the exported clips."},
+            "description": "Horizontal crop position for vertical_crop and vertical_square: -1 = left edge, 0 = centre, 1 = right edge. Applied to the exported clips."},
         "audio_track": {"type": "integer", "minimum": 1, "description": "Audio track number to export (default 1)."},
         "on_conflict": {"type": "string", "enum": ["rename", "skip", "overwrite"],
             "description": "When an output file already exists: rename (default, adds a number), skip, or overwrite (the only way to replace files)."},
@@ -354,7 +356,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "update_clip",
             "Update clip",
-            "Change one clip: start, end, name, tag (empty string clears it), included (whether export_clips exports it by default) or crop_offset (-1 left .. 1 right, for vertical_crop).",
+            "Change one clip: start, end, name, tag (empty string clears it), included (whether export_clips exports it by default) or crop_offset (-1 left .. 1 right, for vertical_crop and vertical_square).",
             json!({
                 "path": path_prop(),
                 "index": {"type": "integer", "minimum": 1, "description": "Clip number from list_clips."},
@@ -363,7 +365,7 @@ pub fn definitions() -> Vec<Value> {
                 "name": {"type": "string", "description": "New name."},
                 "tag": {"type": "string", "description": "Tag label, or empty to clear."},
                 "included": {"type": "boolean", "description": "Include the clip in default exports."},
-                "crop_offset": {"type": "number", "minimum": -1, "maximum": 1, "description": "Horizontal crop position for vertical_crop."},
+                "crop_offset": {"type": "number", "minimum": -1, "maximum": 1, "description": "Horizontal crop position for vertical_crop and vertical_square."},
             }),
             &["path", "index"],
             (false, false, true),

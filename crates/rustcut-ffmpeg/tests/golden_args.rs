@@ -1,4 +1,4 @@
-//! Golden argument vectors: PRD §7.6 B/C/D/E reproduced exactly (the PRD's
+//! Golden argument vectors: PRD §7.6 B/C/D/E/G/H reproduced exactly (the PRD's
 //! quotes are for readability only; argv carries none), plus every variant
 //! the PRD names (hvc1, chain F, fps cap, Native, SAR, EXP-04 mapping,
 //! EXP-12 threads, EXP-13 hardware).
@@ -14,6 +14,8 @@ use std::path::Path;
 
 const IN: &str = "livestream_2026_10_21.mp4";
 const CHAIN_E: &str = "[0:v]split=2[bg][fg];[bg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=10:2,scale=1080:1920,setsar=1[bgv];[fg]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[fgv];[bgv][fgv]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]";
+const CHAIN_G: &str = "[0:v]crop=1080:1080:546:0,split=2[bg][fg];[bg]crop=608:1080:236:0,scale=270:480,boxblur=10:2,scale=1080:1920,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:420:0:0[top];[bg2]crop=1080:420:0:1500[bottom];[fg]setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]";
+const CHAIN_H: &str = "[0:v]split=2[bg][fg];[bg]crop=1080:1080:420:0,scale=270:270,boxblur=10:2,scale=1080:1080,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:236:0:0[top];[bg2]crop=1080:236:0:844[bottom];[fg]scale=1080:608:flags=lanczos,setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]";
 const CHAIN_F: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
 
 fn argv(s: &str) -> Vec<String> {
@@ -46,6 +48,7 @@ fn livestream() -> SourceInfo {
             profile: Some("High".into()),
             level: Some(42),
             color_transfer: None,
+            color_primaries: None,
             bit_depth: Some(8),
         },
         audio_tracks: (1..=3)
@@ -178,6 +181,73 @@ fn prd_7_6_e_vblur_exact() {
          -f mp4 ./02_Jump_Scare_Reaction_vblur.mp4.part"
     );
     assert_eq!(got, argv(&want));
+}
+
+#[test]
+fn prd_7_6_g_vsquare_exact() {
+    let mut job = Job::new(Preset::Vsquare);
+    job.offset = 0.3;
+    let got = job.args("02_Jump_Scare_Reaction_vsquare.mp4.part");
+    let want = format!(
+        "{HEAD_ENC} -filter_complex {CHAIN_G} -map [vout] -map 0:a:0? -c:v libx264 -preset fast -crf 20 -maxrate 16M \
+         -bufsize 32M -fps_mode passthrough -c:a aac -b:a 192k -ac 2 -movflags +faststart -progress pipe:1 -nostats \
+         -f mp4 ./02_Jump_Scare_Reaction_vsquare.mp4.part"
+    );
+    assert_eq!(got, argv(&want));
+}
+
+#[test]
+fn prd_7_6_h_square_exact() {
+    let got = Job::new(Preset::Square).args("02_Jump_Scare_Reaction_square.mp4.part");
+    let want = format!(
+        "{HEAD_ENC} -filter_complex {CHAIN_H} -map [vout] -map 0:a:0? -c:v libx264 -preset fast -crf 20 -maxrate 16M \
+         -bufsize 32M -fps_mode passthrough -c:a aac -b:a 192k -ac 2 -movflags +faststart -progress pipe:1 -nostats \
+         -f mp4 ./02_Jump_Scare_Reaction_square.mp4.part"
+    );
+    assert_eq!(got, argv(&want));
+}
+
+#[test]
+fn square_chains_take_tonemap_before_the_split_and_mix_audio() {
+    let mut sq = Job::new(Preset::Vsquare);
+    sq.source.video.hdr = true;
+    let got = sq.args("o.mp4.part").join(" ");
+    assert!(
+        got.contains(&format!(
+            "-filter_complex [0:v]{CHAIN_F},crop=1080:1080:420:0,split=2[bg][fg];"
+        )) && got.contains("-ac 2 -color_primaries bt709 -color_trc bt709 -colorspace bt709"),
+        "{got}"
+    );
+    let mut h = Job::new(Preset::Square);
+    h.source.video.hdr = true;
+    h.source.video.frame_rate = "144/1".into();
+    let got = h.args("o.mp4.part").join(" ");
+    assert!(
+        got.contains(&format!(
+            "-filter_complex [0:v]{CHAIN_F},fps=60,split=2[bg][fg];"
+        )),
+        "{got}"
+    );
+    let mut mix = Job::new(Preset::Square);
+    mix.settings.mix_all_audio = true;
+    let got = mix.args("o.mp4.part").join(" ");
+    assert!(
+        got.contains(&format!(
+            "-filter_complex {CHAIN_H};[0:a:0][0:a:1][0:a:2]amix="
+        )),
+        "{got}"
+    );
+    // Hardware encoders: the chains end in yuv420p already, so no -pix_fmt.
+    let mut amf = Job::new(Preset::Vsquare);
+    amf.offset = 0.3;
+    amf.encoder = ResolvedEncoder::Hardware(EncoderChoice::H264Amf);
+    let got = amf.args("o.mp4.part").join(" ");
+    assert!(
+        got.contains(&format!("-filter_complex {CHAIN_G} -map [vout]"))
+            && got.contains("-c:v h264_amf")
+            && !got.contains("-pix_fmt"),
+        "{got}"
+    );
 }
 
 #[test]
@@ -335,7 +405,7 @@ fn exp04_sources_without_audio_need_no_special_case() {
         let mut job = Job::new(preset);
         job.source.audio_tracks.clear();
         let got = job.args("o.mp4.part").join(" ");
-        let map = if preset.is_vertical() {
+        let map = if preset.is_framed() {
             "-map 0:a:0?"
         } else {
             "-map 0:a?"

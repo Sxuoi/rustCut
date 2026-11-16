@@ -3,7 +3,7 @@
 **Category:** Desktop Video Utility / Non-Destructive Batch Video Clipper  
 **Core Tech Stack:** Rust (core), Tauri v2 (desktop shell), FFmpeg & FFprobe (media engine, bundled as sidecars)  
 **Target Platforms:** Windows, macOS, Linux (minimum versions in §8.6)  
-**Document Version:** 1.3.0 · **Status:** Draft for review · **Last updated:** 2026-11-13  
+**Document Version:** 1.4.0 · **Status:** Draft for review · **Last updated:** 2026-11-16  
 **Owner:** TBD (Product) · **Reviewers:** Engineering lead, Design lead
 
 ---
@@ -14,6 +14,13 @@
 | :--- | :--- | :--- |
 | 1.2.0 | — | 16:9 working canvas, adjustable crop position, blurred background. |
 | 1.3.0 | 2026-11-13 | Consistency pass, decisions on open behaviours, FFmpeg commands verified, playback-compatibility and data-safety requirements, new sections (goals, metrics, acceptance criteria, test media, risks, open questions). |
+| 1.4.0 | 2026-11-16 | Square framing (FRM-09): *Square on Blur 9:16* and *Square Blur 1:1*; the blur presets preview their output in the player. |
+
+### What changed in 1.4.0
+1. **Two square presets (FRM-09).** *Square on Blur 9:16* puts a 1:1 window of the frame, positioned per clip like the 9:16 window, in the middle of a 1080×1920 output over a blurred copy of the same window. *Square Blur 1:1* writes a 1080×1080 file with the whole frame over a blurred background (chain E on a square canvas). Chains G and H (§7.6), square window vectors (§7.7).
+2. **One layout for preview and export.** `frame_layout` (Rust, over IPC) returns the output size, the sharp window, where it lands and the blurred background's source region; the player and chains D, G and H use it. Chain E keeps its runtime expressions; the layout reproduces what they resolve to, both where the frame lands and which region its blurred background samples (checked against FFmpeg 9.0.2, the background bit-exactly).
+3. **The blur presets preview their output (FRM-04).** The *9:16 only* toggle (*1:1 only* for Square Blur) shows the whole output frame: the window at its place over a background drawn from the player's own `<video>` into a small canvas and blurred with CSS. No second video element (playback memory, §8.1).
+4. **Tiny *Native* outputs blur within FFmpeg's limits.** `boxblur=10:2` needs a background of at least 44 px; smaller ones (sources under about 176 px at *Native*) now get the largest radii FFmpeg accepts. Chain E used to fail there; every other output keeps `boxblur=10:2`.
 
 ### What changed in 1.3.0
 1. **Contradictions resolved.** Auto-save and crash recovery were P0 (§4.5 of v1.2) but scheduled for Phase 2; naming templates were P0 but "custom templates" were Phase 2; the journey's export choice (*Fast Lossless or Vertical Auto-Crop*) didn't match the two modes in §4.4; `J`/`L` both seeked 5 s *and* "increased playback speed"; `{clip_name}` vs `{name}`; `crop_x_offset` existed per clip *and* in export settings; Out < In was "swap **or** reject"; the example source had three different names. Each now has one answer.
@@ -104,7 +111,7 @@ Example data used throughout this document: source `livestream_2026_10_21.mp4` (
 3. **Mark:** At 00:15:20.120 press `I`; at 00:15:55.800 press `O`, or skip `O` and press `Enter` when the moment ends (Out defaults to the playhead). The pending range is drawn on both timelines.
 4. **Queue:** `Enter` adds it as **Clip #02**: a coloured bar on the timeline and a row in the Clip Queue. Press `N` to name it now, or name it later.
 5. **Repeat** until the queue holds every moment worth keeping.
-6. **Export:** `Ctrl+E` opens the Export dialog (§6.2): preset (*Lossless*, *Frame-Accurate*, *Vertical Crop 9:16*, *Vertical Blur 9:16*), output folder, file-name template with a live preview, and pre-flight results. `Enter` starts the batch.
+6. **Export:** `Ctrl+E` opens the Export dialog (§6.2): preset (*Lossless*, *Frame-Accurate*, *Vertical Crop 9:16*, *Vertical Blur 9:16*, *Square on Blur 9:16*, *Square Blur 1:1*), output folder, file-name template with a live preview, and pre-flight results. `Enter` starts the batch.
 7. **Completion:** Clips export in the background with per-clip progress while the queue stays editable. A summary lists successes and failures with *Retry failed* and *Open folder*.
 
 ### 3.2 Resume the next day
@@ -161,9 +168,9 @@ Requirement IDs are used by the acceptance criteria (§10) and the roadmap (§12
 | :--- | :--- | :--- |
 | Start | Keyframe at or before In: lead-in up to one GOP (≈ 1–5 s typical, 10 s+ on some recorders) | Exact frame at In |
 | End | Last frame before Out | Last frame before Out |
-| Quality | Bit-identical packets | Visually lossless (CRF 18; vertical presets CRF 20) |
+| Quality | Bit-identical packets | Visually lossless (CRF 18; framed presets CRF 20) |
 | Speed | Disk-bound (seconds) | Encoder-bound (≈ 1–5× realtime) |
-| Framing | Original only | Original; Vertical Crop / Vertical Blur (P1, §4.5) |
+| Framing | Original only | Original; Vertical Crop / Vertical Blur / Square on Blur / Square Blur 1:1 (P1, §4.5) |
 | Output | MP4 when compatible, else the source container (EXP-03) | MP4 (H.264 + AAC) |
 
 Measured on FFmpeg 6.1.1 with a 2 s GOP: a lossless cut marked 3.000–8.000 s started at the 2.000 s keyframe (audio and video) and ended on the frame before 8.000 s; the re-encoded cut started exactly on the 3.000 s frame and lasted 5.000 s.
@@ -226,18 +233,23 @@ The extension comes from the output container and is appended automatically; tem
 ### 4.5 Framing & Vertical Output (FRM)
 Framing applies to Frame-Accurate exports only; choosing a vertical preset switches the cut mode automatically.
 
-- **FRM-01 [P1] Framing options:** *Original* (source framing, same as Lossless) · *Vertical Crop 9:16* · *Vertical Blur 9:16*.
+- **FRM-01 [P1] Framing options:** *Original* (source framing, same as Lossless) · *Vertical Crop 9:16* · *Vertical Blur 9:16* · *Square on Blur 9:16* · *Square Blur 1:1* (the last two: FRM-09).
 - **FRM-02 [P1] Source-space crop window.** Framing math works on the source's **display frame**: rotation metadata applied, non-square pixels converted to square. The crop window is the **largest 9:16 rectangle that fits inside that frame**:
   - Source at least as wide as 9:16 (all landscape and square footage): full height, width = height × 9/16, slides horizontally.
   - Source taller than 9:16 (e.g., phone screen recordings): full width, height = width × 16/9, centred vertically; crop position ignored.
   - Width and height round to the nearest even number without exceeding the frame; position rounds down to an even number. Algorithm and test vectors: §7.7.
   - The window can never leave the picture, so no source produces black bars, whatever its aspect ratio.
-- **FRM-03 [P1] Crop position per clip.** `crop_x_offset` ∈ [−1.0, +1.0] (−1 = left edge, 0 = centre, +1 = right edge), mapped to `x = (frame_width − window_width) × (1 + offset) / 2`. New clips default to 0; *Reset to centre* restores it. Controls: drag the window on the preview, the *Crop position* slider, or `Alt+←` / `Alt+→` (±0.05; with `Shift` ±0.25). Ignored by Vertical Blur and when the window already spans the full width (e.g., 9:16 sources).
-- **FRM-04 [P1] WYSIWYG preview.** In Vertical Crop mode the player shows the 9:16 window over the source with the outside dimmed (§6.3), plus a *9:16 only* toggle. Overlay and export call the same Rust function over IPC, so preview and output cannot drift apart.
-- **FRM-05 [P1] Vertical Blur.** The full display frame is fitted inside the 9:16 output over a blurred, cover-scaled copy of itself. The blur runs at quarter resolution and is scaled up (~3× faster than full-resolution blur in testing, visually equivalent).
-- **FRM-06 [P1] Output resolution & frame rate.** *1080×1920* (default), *720×1280*, or *Native* (window size, no upscaling; e.g., 608×1080 from a 1080p source). Scaling uses Lanczos. Frame rate: the source rate, capped at 60 fps by default (120/144 fps gameplay is resampled); otherwise timing passes through untouched, so VFR stays VFR.
+  - *Square on Blur* uses the **largest 1:1 window** instead: side = the shorter dimension rounded down to an even number; it slides horizontally in landscape frames, is centred vertically in portrait frames (crop position ignored) and is the whole picture in square frames. Vectors: §7.7.
+- **FRM-03 [P1] Crop position per clip.** `crop_x_offset` ∈ [−1.0, +1.0] (−1 = left edge, 0 = centre, +1 = right edge), mapped to `x = (frame_width − window_width) × (1 + offset) / 2`. New clips default to 0; *Reset to centre* restores it. Controls: drag the window on the preview, the *Crop position* slider, or `Alt+←` / `Alt+→` (±0.05; with `Shift` ±0.25). The same value positions the 1:1 window of *Square on Blur* (same mapping over that window's free range), so switching between the two presets keeps the subject roughly in place. Ignored by Vertical Blur and Square Blur 1:1, and when the window already spans the full width (e.g., 9:16 sources; 1:1 and taller sources for Square on Blur).
+- **FRM-04 [P1] WYSIWYG preview.** In Vertical Crop and Square on Blur mode the player shows the 9:16 or 1:1 window over the source with the outside dimmed (§6.3). Every framed preset has a *9:16 only* toggle (*1:1 only* for Square Blur 1:1) that shows just what the export contains: the window region for Vertical Crop; for the blur presets the whole output frame, the window at its place over the blurred background. The background is drawn from the player's own video element into a small canvas, mirrored at its edges as `boxblur` does, and blurred with CSS to the strength of the export's quarter-resolution blur; no second video element or decoder runs. Overlay, preview and export use the same Rust layout function over IPC (`frame_layout`), so preview and output cannot drift apart.
+- **FRM-05 [P1] Vertical Blur.** The full display frame is fitted inside the 9:16 output over a blurred, cover-scaled copy of itself. The blur runs at quarter resolution and is scaled up (~3× faster than full-resolution blur in testing, visually equivalent). FRM-09's presets use the same blur.
+- **FRM-06 [P1] Output resolution & frame rate.** *1080×1920* (default), *720×1280*, or *Native* (window size, no upscaling; e.g., 608×1080 from a 1080p source). Square Blur 1:1 uses the width for both sides (*1080×1080*, *720×720*; *Native* = the shorter side, e.g., 1080×1080 from 1080p); Square on Blur's *Native* keeps the 1:1 window's pixels (window side × side·16/9, e.g., 720×1280 from 720p). Scaling uses Lanczos. Frame rate: the source rate, capped at 60 fps by default (120/144 fps gameplay is resampled); otherwise timing passes through untouched, so VFR stays VFR.
 - **FRM-07 [P1] HDR sources.** HDR (PQ or HLG transfer, e.g., iPhone footage) is detected at probe time. P0: a pre-flight warning that re-encoded colours will look washed out (Lossless is unaffected). P1: tone-map to SDR BT.709 in re-encode presets (needs an FFmpeg build with `zscale`).
-- **FRM-08 [P1] Preset maximum duration.** A vertical preset can define a maximum clip duration (example: 3:00 for YouTube Shorts); longer clips are flagged in the queue and in pre-flight. Platform limits change, so values live in an updatable preset file.
+- **FRM-08 [P1] Preset maximum duration.** A vertical preset can define a maximum clip duration (example: 3:00 for YouTube Shorts); longer clips are flagged in the queue and in pre-flight. Platform limits change, so values live in an updatable preset file. The limit applies to every framed preset, Square Blur 1:1 included.
+- **FRM-09 [P1] Square framing.** Two presets built on FRM-02's 1:1 window and FRM-05's blur:
+  - *Square on Blur 9:16*: the 1:1 window, positioned per clip (FRM-03), scaled to the output width and centred vertically in the 9:16 output (1080×1080 at y = 420 in 1080×1920) over a blurred, cover-scaled copy of the same window. Chain G (§7.6).
+  - *Square Blur 1:1*: a square file (FRM-06 sizes) with the whole display frame fitted inside over a blurred, cover-scaled copy of itself; no crop position. Chain H (§7.6).
+  - Both are re-encodes with the vertical presets' settings: CRF 20 with the 16M/32M cap, one stereo audio track or *Mix all* (EXP-04), platform maximum (FRM-08), `{preset}` = `vsquare` / `square` (EXP-05).
 
 **Why not v1.2's 16:9 working canvas.** It padded every source to 16:9 before cropping. On test footage this put letterbox bars into 21:9 vertical exports (25% of the frame), filled 39–100% of the output with black when panning narrower sources to the edge, and made Frame-Accurate *Original* exports differ from Lossless ones. The source-space window keeps v1.2's guarantee (no out-of-range offsets, no per-aspect special cases) without those artefacts.
 
@@ -277,7 +289,7 @@ Keyboard-first: every P0 action works without a mouse. On macOS, `Ctrl` = `Cmd`.
 | `Ctrl+O` | Open a video or project | P0 |
 | `Shift+I` / `Shift+O` | Go to the pending (or selected clip's) In / Out | P1 |
 | `Alt+I` / `Alt+O` | Set the selected clip's In / Out to the playhead | P1 |
-| `Alt+←` / `Alt+→` | Nudge the selected clip's crop position (±0.05; `Shift` ±0.25) | P1 |
+| `Alt+←` / `Alt+→` | Nudge the selected clip's crop position (Vertical Crop, Square on Blur; ±0.05, `Shift` ±0.25) | P1 |
 | `?` | Shortcut cheat sheet | P1 |
 
 Rules:
@@ -328,6 +340,7 @@ The header shows the save state ("saved 2s ago", or where the project lives when
 +----------------------------- Export 2 clips -----------------------------+
 | Preset     ( ) Lossless (Original)        (*) Vertical Crop 9:16         |
 |            ( ) Frame-Accurate (Original)  ( ) Vertical Blur 9:16         |
+|            ( ) Square on Blur 9:16        ( ) Square Blur 1:1            |
 | Output     [1080x1920 v]   Frame rate [Source, max 60 v]   Audio [1 v]   |
 | Encoder    [Auto (NVENC H.264) v]                Parallel jobs [2 v]     |
 | Folder     [D:\Recordings\livestream_2026_10_21_clips   ] [Browse]       |
@@ -344,7 +357,7 @@ The header shows the save state ("saved 2s ago", or where the project lives when
 
 The default output folder is `<source folder>/<source name>_clips`, created if missing and remembered per project. Options that don't apply to the chosen preset are hidden (Lossless shows container and lead-in information instead of resolution and encoder).
 
-### 6.3 Vertical Crop overlay
+### 6.3 Crop overlay (Vertical Crop, Square on Blur)
 
 ```
 +------------------------------------------------------+
@@ -356,7 +369,7 @@ The default output folder is `<source folder>/<source name>_clips`, created if m
  Crop position  [-1 ===========|========= +1]  [Reset]
 ```
 
-Dimmed areas (`:`) are outside the exported window. The slider and the drag handle edit the selected clip's `crop_x_offset` (FRM-03).
+Dimmed areas (`:`) are outside the exported window: 9:16 for Vertical Crop, 1:1 for Square on Blur. The slider and the drag handle edit the selected clip's `crop_x_offset` (FRM-03). With *9:16 only* (*1:1 only*) the player shows the output frame instead (FRM-04); the window stays put and the video slides under it while dragging, and the blur presets show their blurred background around it.
 
 ### 6.4 States
 
@@ -543,6 +556,7 @@ Removed from v1.2: `rayon`, because export jobs are FFmpeg child processes that 
 | `start_sec`, `end_sec` | Seconds from the first presentation timestamp, millisecond precision. |
 | `tag_id` | Replaces v1.2's per-clip `color`; points into `tags`. |
 | `crop_x_offset` | Per clip only (v1.2 also had a project-level copy). |
+| `export_settings.framing` | `original`, `vertical_crop`, `vertical_blur`, `vertical_square` (Square on Blur 9:16) or `square_blur` (Square Blur 1:1). `output_resolution` names the 9:16 size; Square Blur 1:1 uses its width for both sides. Builds from before FRM-09 do not know the two square values: they report such a project as damaged, keep it as `<file>.damaged` and fall back to the newest backup they can read (which may be older) or a partial read. |
 | `export_status` | `pending`, `exporting`, `completed`, `failed`, `outdated`; `exporting` resets to `pending` on load. |
 | `last_export.settings_hash` | Hash of the clip's times and crop plus the export settings used; when it no longer matches, the clip becomes `outdated`. |
 
@@ -624,13 +638,41 @@ ffmpeg -hide_banner -nostdin -y \
 - Background: cover-scale to quarter resolution (270×480), blur, scale up. Foreground: fit inside 1080×1920, centred.
 - `-filter_complex` output must be mapped explicitly; `"0:a:0?"` exports video-only when there is no audio.
 
-**F. HDR → SDR tone-map (P1, needs `zscale`).** Insert at the start of the video chain (before `crop` in D, before `split` in E) and tag the output `-color_primaries bt709 -color_trc bt709 -colorspace bt709`:
+**F. HDR → SDR tone-map (P1, needs `zscale`).** Insert at the start of the video chain (before `crop` in D and G, before `split` in E and H) and tag the output `-color_primaries bt709 -color_trc bt709 -colorspace bt709`:
 ```text
 zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p
 ```
 Verified on a 10-bit PQ fixture (output 8-bit BT.709).
 
-Examples C–E use the template `{index}_{name}_{preset}`; with the default template all presets share one name and EXP-07 resolves the collision.
+**G. Square on Blur 9:16 → 1080×1920, clip #02 (`crop_x_offset` = +0.3)**
+Rust computes the 1:1 window (§7.7): 1920×1080 → 1080×1080 at x = 546. The window is cropped before the split, so the background is the window itself: `frame_layout` names its centre 9:16 strip (608×1080, 236 px into the window, x = 782 of the source), which is cropped, blurred at quarter size, scaled up, and cut into the bands above and below the square; `vstack` joins band, square, band.
+```bash
+ffmpeg -hide_banner -nostdin -y \
+  -ss 920.120 -to 955.800 -i "livestream_2026_10_21.mp4" \
+  -filter_complex "[0:v]crop=1080:1080:546:0,split=2[bg][fg];[bg]crop=608:1080:236:0,scale=270:480,boxblur=10:2,scale=1080:1920,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:420:0:0[top];[bg2]crop=1080:420:0:1500[bottom];[fg]setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]" \
+  -map "[vout]" -map "0:a:0?" \
+  -c:v libx264 -preset fast -crf 20 -maxrate 16M -bufsize 32M -fps_mode passthrough \
+  -c:a aac -b:a 192k -ac 2 \
+  -movflags +faststart \
+  -progress pipe:1 -nostats \
+  -f mp4 "02_Jump_Scare_Reaction_vsquare.mp4.part"
+```
+- A window smaller than the output width is scaled up with Lanczos (720p source: `[fg]scale=1080:1080:flags=lanczos,setsar=1[fgv]`); one that already has the output size is not scaled.
+- Chain F, the SAR normalisation and the frame-rate cap come before the crop: `[0:v]<F>,scale=768:576,setsar=1,crop=576:576:96:0,fps=30,split=2[bg][fg];…`.
+- *Native* keeps the window's pixels: a 720×720 window gives a 720×1280 output with the square at y = 280.
+- Stacking instead of `overlay`: on a 1080×1920 frame `overlay` cost about 1.2 ms per frame on the test laptop (Ryzen 7 8845HS, AMD AMF) and held the AMF export to about 4.1× realtime; with `vstack` the chain filters about as fast as chain D's encode needs (5.1× AMF in a direct FFmpeg run, chain D 5.3×; docs/PERFORMANCE.md).
+- `vstack`/`hstack` build new frames without colour primaries and transfer, so `setparams=color_primaries=…:color_trc=…` puts them back after the stack: BT.709 after chain F, the probed values otherwise (only FFmpeg's own names are passed through).
+- The background's source rectangle has even values so `crop` uses it exactly; the player draws the same rectangle (AC-18). Tiny *Native* outputs (background under 44 px) get `boxblur` radii FFmpeg accepts, at most (shorter side of the plane − 1) / 2, instead of 10; chain E does the same, so it no longer fails there.
+
+**H. Square Blur 1:1 → 1080×1080**
+```bash
+-filter_complex "[0:v]split=2[bg][fg];[bg]crop=1080:1080:420:0,scale=270:270,boxblur=10:2,scale=1080:1080,setsar=1,split=2[bg1][bg2];[bg1]crop=1080:236:0:0[top];[bg2]crop=1080:236:0:844[bottom];[fg]scale=1080:608:flags=lanczos,setsar=1[fgv];[top][fgv][bottom]vstack=3,format=yuv420p[vout]"
+```
+- Chain E's layout on a square canvas, with literal numbers from `frame_layout`: the frame is fitted exactly as FFmpeg's `force_original_aspect_ratio=decrease:force_divisible_by=2` would size it, and placed at the even position `overlay=(W-w)/2:(H-h)/2` would pick on a 4:2:0 picture (checked against FFmpeg 9.0.2 for 12 frame sizes × 3 output sizes, chain E included); bands and frame are stacked as in G.
+- 720×720: `[fg]scale=720:406:…` between bands of 156 and 158 rows; portrait sources are fitted by height and stacked side by side (1080×1920 → 608×1080 between 236-px bands, `hstack=3`). One band when the frame touches an edge (`vstack=2`), none when it fills the square (a square source: `[0:v]setsar=1,format=yuv420p[vout]` at its own size).
+- Arguments otherwise as G (`-map "[vout]"`, CRF 20, 16M/32M cap, one stereo track); file `02_Jump_Scare_Reaction_square.mp4.part`.
+
+Examples C–H use the template `{index}_{name}_{preset}`; with the default template all presets share one name and EXP-07 resolves the collision.
 
 ### 7.7 Crop window algorithm
 ```rust
@@ -670,6 +712,33 @@ Test vectors (the UI overlay and any TypeScript port must reproduce them):
 | 1080×2340 (taller than 9:16) | 1080×1920 | 0 (offset ignored) | 210 |
 
 Verified: for each 1080p-class, 720p, 21:9, 4:3, 1:1, 9:16, 1080×2340 and SAR 16:15 fixture at offsets −1, 0 and +1, the exported 1080×1920 frame had no black rows or columns, and its mean brightness matched the source region it was cut from.
+
+**Square window (FRM-09).** Same rules with a 1:1 window: `side = min(dw, dh) & !1`; landscape frames slide it on X with the same offset mapping, portrait frames centre it on Y.
+```rust
+fn square_window(dw: u32, dh: u32, offset: f64) -> (u32, u32, u32, u32) {
+    let off = offset.clamp(-1.0, 1.0);
+    let side = dw.min(dh) & !1;
+    if dw >= dh {
+        (side, side, floor_even((dw - side) as f64 * (1.0 + off) / 2.0), 0)
+    } else {
+        (side, side, 0, floor_even((dh - side) as f64 / 2.0))
+    }
+}
+```
+
+| Display frame | Window | x at offset −1 / 0 / +0.3 / +1 | y |
+| :--- | :--- | :--- | :--- |
+| 1920×1080 (16:9) | 1080×1080 | 0 / 420 / 546 / 840 | 0 |
+| 3840×2160 (4K) | 2160×2160 | 0 / 840 / 1092 / 1680 | 0 |
+| 1280×720 | 720×720 | 0 / 280 / 364 / 560 | 0 |
+| 2560×1080 (21:9) | 1080×1080 | 0 / 740 / 962 / 1480 | 0 |
+| 1440×1080 (4:3) | 1080×1080 | 0 / 180 / 234 / 360 | 0 |
+| 1080×1080 (1:1) | 1080×1080 | 0 (offset ignored) | 0 |
+| 768×576 (720×576, SAR 16:15) | 576×576 | 0 / 96 / 124 / 192 | 0 |
+| 1080×1920 (9:16) | 1080×1080 | 0 (offset ignored) | 420 |
+| 1080×2340 (taller than 9:16) | 1080×1080 | 0 (offset ignored) | 630 |
+
+The full preview/export layout of every framing (output size, window, its place in the output, the background's source region) for these frames, offsets and the three output sizes is in `crates/rustcut-framing/tests/layout_vectors.json`; the TypeScript port must reproduce it.
 
 ### 7.8 Export scheduler & process management
 - Jobs run on tokio; a `Semaphore` with `parallel_jobs` permits caps concurrent FFmpeg processes (EXP-12).
@@ -799,7 +868,7 @@ v1.2's single "< 150 MB RAM" target is unrealistic once the WebView's own render
 | ID | Covers | Criterion |
 | :--- | :--- | :--- |
 | AC-17 | FRM-02, FRM-03 | For fixtures M06–M10 at offsets −1, 0 and +1, vertical exports are 1080×1920, contain no black rows or columns, and match the §7.7 vectors. |
-| AC-18 | FRM-04 | The preview overlay rectangle equals the exported window for every §7.7 vector. |
+| AC-18 | FRM-04, FRM-09 | The preview overlay rectangle equals the exported window for every §7.7 vector, 9:16 and 1:1; with *9:16 only* / *1:1 only*, the blur presets' preview shows the window where the export puts it, and its background matches the exported file. |
 | AC-19 | EXP-12 | With 4 parallel jobs, a batch never exceeds 4 FFmpeg processes and finishes with the same outputs as a sequential run. |
 
 ---
@@ -854,7 +923,7 @@ Durations are placeholders until team size is known; re-plan at the end of Phase
 ### Phase 2: Clipper Pro, P1 (Weeks 6–9)
 - Waveform, zoom timeline and media index, keyframe awareness, trim handles, colour tags (PLY-05–06, MRK-05–07).
 - Search and sort, bulk edit, 500-clip scale (QUE-06–08).
-- Framing: Vertical Crop with pan, Vertical Blur, output presets, frame-rate cap, HDR tone-map, preset maximum duration (FRM-01–08).
+- Framing: Vertical Crop with pan, Vertical Blur, Square on Blur and Square Blur 1:1, output presets, frame-rate cap, HDR tone-map, preset maximum duration (FRM-01–09).
 - Parallel scheduler, hardware encoders, notifications and sleep blocking (EXP-12–14).
 - Tier 3 proxy, MPEG-TS input, recent projects (PRJ-07), auto-updater.
 - **Exit:** AC-17–AC-19 pass.

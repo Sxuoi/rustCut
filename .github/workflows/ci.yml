@@ -72,4 +72,5 @@ jobs:
           node --check tests/e2e/harness.mjs
           node --check tests/e2e/keyboard.test.mjs
           node --check tests/e2e/overlay.test.mjs
+          node --check tests/e2e/square.test.mjs
           node --check scripts/perf.mjs

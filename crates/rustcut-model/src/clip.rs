@@ -108,9 +108,10 @@ impl Clip {
     }
 
     /// Hash of the clip values that determine an export's content and file
-    /// name under `preset` (8 hex chars). Crop only matters for Vertical Crop.
+    /// name under `preset` (8 hex chars). Crop only matters for the presets
+    /// with a crop window (Vertical Crop, Square on Blur).
     pub fn content_hash(&self, preset: Preset) -> String {
-        let crop = if preset == Preset::Vcrop {
+        let crop = if preset.uses_crop_offset() {
             (self.crop_x_offset * 10_000.0).round() as i64
         } else {
             0
@@ -280,6 +281,25 @@ mod tests {
         assert_eq!(c.export_status, ExportStatus::Outdated);
         c.set_fields(&original);
         assert_eq!(c.export_status, ExportStatus::Completed);
+    }
+
+    #[test]
+    fn crop_position_matters_only_to_presets_with_a_crop_window() {
+        let c = clip();
+        let mut moved = clip();
+        moved.crop_x_offset = c.crop_x_offset + 0.5;
+        for p in Preset::ALL {
+            let changed = c.content_hash(p) != moved.content_hash(p);
+            assert_eq!(
+                changed,
+                matches!(p, Preset::Vcrop | Preset::Vsquare),
+                "{p:?}"
+            );
+        }
+        // The same clip under different presets never shares a hash.
+        let hashes: std::collections::HashSet<String> =
+            Preset::ALL.iter().map(|p| c.content_hash(*p)).collect();
+        assert_eq!(hashes.len(), Preset::ALL.len());
     }
 
     #[test]

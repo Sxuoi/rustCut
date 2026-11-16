@@ -7,7 +7,9 @@ import type { OutputResolution } from "./OutputResolution";
  */
 export type PlatformPreset = { id: string, label: string, 
 /**
- * `vertical_crop` or `vertical_blur`.
+ * A framed option: `vertical_crop`, `vertical_blur`, `vertical_square`
+ * or `square_blur` (informational; the Export dialog keeps the user's
+ * chosen preset).
  */
 framing: Framing, output_resolution: OutputResolution, 
 /**

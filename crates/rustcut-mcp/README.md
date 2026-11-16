@@ -65,7 +65,7 @@ Logs go to stderr and `<logs>/mcp.log`; stdout carries only the protocol.
 | `add_clips` | Add clips from `{start,end,name,tag}` items and/or a timestamps text (`12:10-13:05 Jump scare`); per-item errors. |
 | `update_clip`, `delete_clips` | Edit or remove clips by number. |
 | `preview_export` | Pre-flight report (file names, size estimate, free space, warnings, blocking errors); writes nothing. |
-| `export_clips` | Exports (presets `lossless`, `accurate`, `vertical_crop`, `vertical_blur`); waits up to `wait_sec` then returns a `job_id`; progress notifications when the client sends a progress token. |
+| `export_clips` | Exports (presets `lossless`, `accurate`, `vertical_crop`, `vertical_blur`, `vertical_square`, `square_blur`); waits up to `wait_sec` then returns a `job_id`; progress notifications when the client sends a progress token. |
 | `export_status`, `cancel_export` | Poll or cancel a running export. |
 
 Times are seconds from the video start (number) or `"HH:MM:SS.mmm"` / `"MM:SS"` / `"12m30s"` text. `add_clips` timestamps accept `12:10-13:05 name`, `10:00 --> 10:20 name`, `[00:10:00 -> 00:10:05] text` (a `get_transcript` line), `90-100 name` (seconds), `12m30s-13m name`, CSV and chapter lists (`12:10 name`, ends at the next start). The result lists `warnings` (end clamped to the video end, clip over 10 minutes, odd name); names are limited to 100 characters. `get_transcript` strips markup, ASS drawing commands, web-address watermarks and duplicate lines. The first call of a session can take several seconds (FFmpeg and encoder detection). Tool failures are

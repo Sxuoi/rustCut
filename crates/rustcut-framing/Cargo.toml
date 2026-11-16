@@ -1,6 +1,6 @@
 [package]
 name = "rustcut-framing"
-description = "Source-space 9:16 crop window (PRD §7.7) and vertical/HDR FFmpeg filter chains (§7.6 D/E/F)"
+description = "Source-space 9:16 and 1:1 crop windows (PRD §7.7), the shared preview/export layout, and the vertical, square and HDR FFmpeg filter chains (§7.6 D–H)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

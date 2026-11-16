@@ -39,6 +39,7 @@ export function sampleSource(): SourceInfo {
       profile: "High",
       level: 31,
       color_transfer: null,
+      color_primaries: null,
       bit_depth: 8,
     },
     audio_tracks: [
@@ -74,6 +75,7 @@ export function fakeSource(path: string): SourceInfo {
       profile: "High",
       level: 42,
       color_transfer: "bt709",
+      color_primaries: "bt709",
       bit_depth: 8,
     },
     audio_tracks: [

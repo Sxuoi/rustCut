@@ -1,7 +1,7 @@
 <script lang="ts">
   // Export dialog (§6.2, EXP-01): preset, per-preset options (Lossless:
   // container, lead-in, AAC offer, snap In; re-encode: resolution, frame rate,
-  // audio track / mix, encoder, parallel jobs; vertical: platform maximum),
+  // audio track / mix, encoder, parallel jobs; framed: platform maximum),
   // folder, file-name template with live preview, If-exists policy and the
   // pre-flight list whose errors block Start (EXP-11). Settings persist via
   // project.setExportSettings as they change; Enter starts, Escape closes.
@@ -24,9 +24,10 @@
     encoderOptions,
     FPS_CAPS,
     insertToken,
+    isFramedPreset,
     isReencodePreset,
-    isVerticalPreset,
     leadInSummary,
+    outputSize,
     PARALLEL_JOBS,
     platformPresets,
     platformById,
@@ -67,7 +68,7 @@
 
   const ids = $derived(includedClips(project.clips).map((c) => c.id));
   const preset = $derived<Preset>(draft ? presetOf(draft) : "lossless");
-  const vertical = $derived(isVerticalPreset(preset));
+  const framed = $derived(isFramedPreset(preset));
   const reencode = $derived(isReencodePreset(preset));
   const hw = $derived(exporter.hwEncoders ?? []);
   const encoders = $derived(draft ? encoderOptions(hw, draft.encoder) : []);
@@ -119,15 +120,16 @@
     void exporter.loadCpuCount();
   });
 
-  // FRM-06 Native size = crop window size (same Rust function as the export).
+  // FRM-06 Native size of the chosen preset (same Rust layout as the export).
   $effect(() => {
     const video = project.source?.video;
-    if (!open || !vertical || !video) return;
+    const kind = draft?.framing;
+    if (!open || !framed || !video || !kind) return;
     let cancelled = false;
     backend
-      .cropWindow(video.display_width, video.display_height, 0)
-      .then((w) => {
-        if (!cancelled) nativeSize = `${w.w}×${w.h}`;
+      .frameLayout(kind, video.display_width, video.display_height, 0, "native")
+      .then((l) => {
+        if (!cancelled) nativeSize = l ? `${l.out_w}×${l.out_h}` : null;
       })
       .catch(() => {
         if (!cancelled) nativeSize = null;
@@ -203,7 +205,7 @@
 
   function resolutionLabel(r: OutputResolution): string {
     if (r === "native") return nativeSize ? t("export.resolution.nativeSize", { size: nativeSize }) : t("export.resolution.native");
-    return r.replace("x", "×");
+    return outputSize(preset, r) ?? r;
   }
 
   function trackLabel(i: number): string {
@@ -316,6 +318,8 @@
     accurate: "export.preset.accurate",
     vcrop: "export.preset.vcrop",
     vblur: "export.preset.vblur",
+    vsquare: "export.preset.vsquare",
+    square: "export.preset.square",
   };
   const POLICY_KEYS: Record<ConflictPolicy, string> = {
     rename: "export.conflict.rename",
@@ -400,7 +404,7 @@
         <div class={row}>
           <span class="{label} pt-1.5">{t("export.output.label")}</span>
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {#if vertical}
+            {#if framed}
               <label class="flex items-center gap-1.5">
                 <span class="text-xs text-muted">{t("export.resolution.label")}</span>
                 <select
@@ -427,7 +431,7 @@
                 {/if}
               </select>
             </label>
-            {#if vertical}
+            {#if framed}
               <label class="flex items-center gap-1.5">
                 <span class="text-xs text-muted">{t("export.audio.label")}</span>
                 {#if audioTracks.length === 0}
@@ -498,7 +502,7 @@
         </div>
       </div>
 
-      {#if vertical}
+      {#if framed}
         <!-- FRM-08 platform maximum duration -->
         <div class={row}>
           <label class="{label} pt-1.5" for="{uid}-platform">{t("export.platform.label")}</label>

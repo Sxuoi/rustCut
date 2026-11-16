@@ -44,6 +44,10 @@ pub struct VideoInfo {
     pub level: Option<i32>,
     #[serde(default)]
     pub color_transfer: Option<String>,
+    /// FFprobe's `color_primaries` (e.g. `bt709`, `bt2020`). The square
+    /// presets' stacked frames lose it, so chains G and H set it back.
+    #[serde(default)]
+    pub color_primaries: Option<String>,
     #[serde(default)]
     pub bit_depth: Option<u32>,
 }

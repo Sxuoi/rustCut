@@ -268,7 +268,7 @@ pub fn preflight(input: &PreflightInput<'_>) -> PreflightReport {
     if source.video.hdr && preset.is_reencode() {
         items.push(hdr_item(input.zscale_available));
     }
-    if let Some(max) = settings.max_duration_sec.filter(|_| preset.is_vertical()) {
+    if let Some(max) = settings.max_duration_sec.filter(|_| preset.is_framed()) {
         let long: Vec<&&Clip> = clips.iter().filter(|c| c.duration() > max + 1e-6).collect();
         if !long.is_empty() {
             items.push(item(
@@ -698,6 +698,7 @@ mod tests {
                 profile: None,
                 level: None,
                 color_transfer: None,
+                color_primaries: None,
                 bit_depth: None,
             },
             audio_tracks: vec![AudioTrack {
@@ -980,16 +981,18 @@ mod tests {
     }
 
     #[test]
-    fn max_duration_warning_is_vertical_only() {
-        let mut env = basic();
-        env.settings.apply_preset(Preset::Lossless);
-        env.settings.max_duration_sec = Some(20.0);
-        let r = env.run();
-        assert!(
-            r.items
+    fn max_duration_warning_is_for_framed_presets_only() {
+        for p in Preset::ALL {
+            let mut env = basic();
+            env.settings.apply_preset(p);
+            env.settings.max_duration_sec = Some(20.0);
+            let r = env.run();
+            let warned = r
+                .items
                 .iter()
-                .all(|i| i.check != PreflightCheck::MaxDuration)
-        );
+                .any(|i| i.check == PreflightCheck::MaxDuration);
+            assert_eq!(warned, p.is_framed(), "{p:?}");
+        }
     }
 
     #[test]

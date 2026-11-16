@@ -50,7 +50,7 @@ const messages: Record<string, string> = {
   "kb.saved": "Project saved.",
   "kb.nothingToGoIn": "No In point to go to: set one (I) or select a clip.",
   "kb.nothingToGoOut": "No Out point to go to: set one (O) or select a clip.",
-  "kb.cropOnlyVertical": "Crop nudges apply with the Vertical Crop 9:16 preset.",
+  "kb.cropOnlyVertical": "Crop nudges apply with the Vertical Crop 9:16 and Square on Blur 9:16 presets.",
 
   // Shortcut table (§5): cheat sheet, menus, tooltips
   "kb.playPause": "Play / pause",
@@ -89,7 +89,7 @@ const messages: Record<string, string> = {
   "kb.group.marking": "Marking",
   "kb.group.queue": "Clip queue",
   "kb.group.project": "Project",
-  "kb.group.framing": "Vertical crop",
+  "kb.group.framing": "Crop window",
   "kb.group.help": "Help",
 
   // Cheat sheet
@@ -102,6 +102,8 @@ const messages: Record<string, string> = {
   "preset.accurate": "Frame-Accurate",
   "preset.vcrop": "Vertical Crop 9:16",
   "preset.vblur": "Vertical Blur 9:16",
+  "preset.vsquare": "Square on Blur 9:16",
+  "preset.square": "Square Blur 1:1",
 
   // Header (§6.1)
   "header.preset": "Preset:",

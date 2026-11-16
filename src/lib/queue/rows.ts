@@ -103,7 +103,7 @@ export interface FlagContext {
   sourceDurationSec: number | null;
   /** FRM-08 maximum clip duration of the chosen platform preset. */
   maxDurationSec: number | null;
-  /** Current export preset; the maximum applies to vertical presets only. */
+  /** Current export preset; the maximum applies to framed presets only. */
   preset: Preset | null;
 }
 
@@ -113,7 +113,7 @@ export interface FlagContext {
  *   `of` is the lowest other clip number with that range;
  * * `out_of_range`: In at or after the end of the source (e.g. after a relink
  *   to a shorter file);
- * * `too_long`: longer than the vertical preset's maximum (FRM-08).
+ * * `too_long`: longer than the framed preset's maximum (FRM-08).
  */
 export function clipFlags(clips: readonly Clip[], ctx: FlagContext): Map<string, ClipFlag[]> {
   const byRange = new Map<string, number[]>();
@@ -124,8 +124,8 @@ export function clipFlags(clips: readonly Clip[], ctx: FlagContext): Map<string,
     else byRange.set(key, [c.index]);
   }
   const sourceMs = ctx.sourceDurationSec !== null && ctx.sourceDurationSec > 0 ? toMs(ctx.sourceDurationSec) : null;
-  const vertical = ctx.preset === "vcrop" || ctx.preset === "vblur";
-  const maxMs = vertical && ctx.maxDurationSec !== null && ctx.maxDurationSec > 0 ? toMs(ctx.maxDurationSec) : null;
+  const framed = ctx.preset !== null && ctx.preset !== "lossless" && ctx.preset !== "accurate";
+  const maxMs = framed && ctx.maxDurationSec !== null && ctx.maxDurationSec > 0 ? toMs(ctx.maxDurationSec) : null;
   const out = new Map<string, ClipFlag[]>();
   for (const c of clips) {
     const flags: ClipFlag[] = [];
