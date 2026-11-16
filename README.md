@@ -58,6 +58,8 @@ Choose **Vertical Crop 9:16** and a 9:16 window appears over the video. Drag it,
 see the result. **Vertical Blur 9:16** keeps the whole frame over a blurred background instead. Both
 export 1080x1920 files.
 
+![Choosing Square on Blur 9:16, dragging the 1:1 window onto the subject, previewing 9:16 only, switching to Square Blur 1:1, exporting, and the 1080x1920 and 1080x1080 outputs side by side](docs/feature-square.gif)
+
 Two square options use the same blurred background. **Square on Blur 9:16** puts a square you place per
 clip, just like the 9:16 window, in the middle of a 1080x1920 frame. **Square Blur 1:1** exports a
 1080x1080 file with the whole frame on a blurred background. Tick **9:16 only** or **1:1 only** to see
