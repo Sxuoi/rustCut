@@ -75,8 +75,11 @@ describe("export (lossless, vertical, failure)", { concurrency: false }, () => {
       const dur = Number(j.format.duration);
       assert.ok(dur >= 2.9 && dur <= 11.5, `${f} duration ${dur}`);
     }
-    const disk = readProject(s.project).clips.map((c) => c.export_status);
-    assert.deepEqual(disk, ["completed", "completed", "completed"], "statuses are persisted");
+    // Status changes are auto-saved debounced (PRJ-01: at most about 1 s after the change), so a
+    // fast export can show its last DONE row before the project file has it. Wait for the file.
+    const onDisk = () => readProject(s.project)?.clips.map((c) => c.export_status);
+    await waitFor(() => onDisk()?.every((x) => x === "completed"), { timeout: 3000, what: "completed statuses in the project file" }).catch(() => {});
+    assert.deepEqual(onDisk(), ["completed", "completed", "completed"], "statuses are persisted");
   });
 
   test("vertical crop export is 1080x1920 (FRM-02, AC-17)", async () => {
