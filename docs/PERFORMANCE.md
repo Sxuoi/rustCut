@@ -61,7 +61,9 @@ and process-counter samples. Run-specific hard links, project sidecars and the e
 files use a fresh directory on the fixture volume; the harness also creates a fresh app
 and WebView profile. These are cleaned after the owned app exits. Generated
 inputs and reports remain for reuse. Do not compare numbers from busy machines
-or different build modes as if they were equivalent.
+or different build modes as if they were equivalent. Export rows from before
+2026-11-17 were timed by polling the app during the export, which made them a
+little slower (see "Measurement notes for perf.mjs").
 
 ## What is measured
 
@@ -75,7 +77,7 @@ or different build modes as if they were equivalent.
 | Mark capture | Paused transport timestamp captured in the real I keydown handler compared with pending In. Equality is checked; the absence of IPC in the capture implementation remains covered by frontend tests/code review. Reported as INFO. |
 | Timeline | Exactly 500 clips created with `import_timestamps`, after an actual waveform completes. Dispatch wheel zooms over five seconds and collect `requestAnimationFrame` intervals; assert that the timeline summary changes. Report mean scheduling fps and p95 interval. This measures responsiveness while exercising redraws, not GPU presentation rate; display refresh limits the result. |
 | Memory | `PrivatePageCount` (private committed bytes) from Win32_Process for the owned Rust PID and all descendants during playback. Five samples, report peak core and tree totals. The 20 GB stage starts once the launch warm-up has written its hardware-encoder cache, so its test encodes are not counted as playback. Compare small-file and 20 GB playback tree totals; the size delta is INFO because PRD defines no numeric flatness tolerance. This is not working-set/RSS memory. |
-| Lossless | From `start_export` invocation through persisted completed statuses for all ten clips. Includes pre-flight, encoder detection if performed by the app, child-process creation and output verification; no encoder warmup call precedes it. |
+| Lossless | From just before `start_export` to the arrival of the last clip's `export_clip_finished` event, both timed in the page; the backend sends that event right after it marks the clip completed. Completion comes from the app's own event channel, tapped as for the waveform, so no project snapshot is read during an export that keeps reporting progress (see "Measurement notes for perf.mjs"). Includes pre-flight, encoder detection if performed by the app, child-process creation and output verification; no encoder warmup call precedes it. A failed clip fails the row with its error message; so does a batch that pauses or ends with clips skipped or cancelled. |
 | Vertical | Media seconds divided by wall seconds, same completion endpoint, 1080×1920 output with 60 fps cap. Measure explicit libx264 and an available hardware encoder separately; no hardware yields INFO. |
 | Waveform | Fresh source/cache: open request to first nonempty waveform event, then final `done` event. Includes open/probe and the first presented frame, which the waveform job waits for (AC-14). Observes the app's existing Tauri channel callbacks and forwards them unchanged, so the UI also receives the waveform. |
 | Auto-save | Start a backend rename and poll the actual `.rustcut` JSON until the new name is on disk (10 ms polling, generous timeout). |
@@ -226,6 +228,16 @@ level gives lower quality than intended.
 - Exports and warm-up (changed with the cold-start fix): exports go to the run folder on the
   fixture volume instead of `%TEMP%`, where three runs whose cleanup was blocked by WebView2
   had left 1.7 GB on a nearly full system drive. The 20 GB stage waits for the launch warm-up.
+- Export completion (changed 2026-11-17): the export rows used to call `get_snapshot` every
+  100 ms until every clip was `completed`. Paired with direct runs of the same FFmpeg command on
+  2026-11-17, that polling made a 60 s Vertical Crop export with `h264_amf` take a median 0.28 s
+  longer (13 of 17 pairs slower; 0.04 s when polling once a second), and the endpoint lagged
+  completion by 6–117 ms. The UI never polls during an export: progress and results arrive as
+  events. perf.mjs now waits for those events in the page (see "What is measured"). It reads the
+  snapshot only after 5 s without any export event, while FFmpeg reports progress every 0.5 s,
+  and then only to report a failure: an export seen completing only there fails instead of
+  being timed. Export rows recorded before this change include the polling; on the AMF row,
+  0.28 s of a 60 s export is about 0.1× at 4.7×.
 
 #### After the waveform fix and the AC-14 measurement change (working tree on top of eaf5d8a)
 

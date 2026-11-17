@@ -209,10 +209,13 @@ async function main() {
       if (!(callbacks instanceof Map)) throw new Error("Tauri callback instrumentation unavailable");
       for (const [id, callback] of callbacks) callbacks.set(id, (raw) => {
         const event = raw?.message;
+        const now = performance.now();
         if (event?.type === "waveform") {
-          const now = performance.now();
           if (event.chunk.peaks.length && window.__perfWave.first === null) window.__perfWave.first = now;
           if (event.chunk.done) window.__perfWave.done = now;
+        } else if (typeof event?.type === "string" && event.type.startsWith("export_") && window.__perfExport) {
+          // exportBatch()'s watcher must never keep an event from the app.
+          try { window.__perfExport.observe(event, now); } catch (error) { window.__perfExport.settle({ error: `Export watcher: ${error}` }); }
         }
         return callback(raw);
       });
@@ -279,17 +282,86 @@ async function main() {
     if (binding) await key(binding);
     return app.page.evaluate(() => window.__perfNavigation);
   }
+  /** After this long without an export event, exportBatch() reads the app's state at each check; FFmpeg reports progress every 0.5 s. */
+  const EXPORT_QUIET_MS = 5000;
+  /**
+   * One export batch, timed in the page from just before `start_export` to the arrival of the last
+   * clip's `export_clip_finished` event, which the backend sends right after it marks the clip
+   * completed. Completion comes from the app's own event channel (tapped in observeEvents), as in
+   * the UI: polling `get_snapshot` every 100 ms during an export slowed FFmpeg (a median 0.28 s per
+   * 60 s AMF export, measured 2026-11-17) and added 6–117 ms of lag. The snapshot is read only
+   * after EXPORT_QUIET_MS without any export event, to report a failure that no event showed.
+   */
   async function exportBatch(ids, settings) {
-    const start = performance.now();
-    await app.invoke("start_export", { clip_ids: ids, settings });
-    const completed = await waitFor(async () => {
+    await app.page.evaluate(async ({ ids, settings }) => {
+      const watch = window.__perfExport = {
+        batchId: null, start: 0, lastEventAt: performance.now(), result: null, waiters: new Set(),
+        finished: new Map(), // "batch/clip" -> { at, outcome }
+        states: new Map(), // batch id -> latest BatchState
+        observe(event, now) {
+          this.lastEventAt = now;
+          if (event.type === "export_clip_finished") {
+            const { batch_id, clip_id, outcome } = event.finished;
+            this.finished.set(`${batch_id}/${clip_id}`, { at: now, outcome });
+          } else if (event.type === "export_batch") {
+            const { state } = event;
+            this.states.set(state.batch?.batch_id ?? state.batch_id ?? state.summary?.batch_id, state);
+          }
+          this.check();
+        },
+        check() {
+          if (this.batchId === null) return; // events can arrive before start_export's reply
+          const clips = ids.map((id) => this.finished.get(`${this.batchId}/${id}`));
+          const failed = clips.find((clip) => clip?.outcome.outcome === "failed");
+          if (failed) return this.settle({ error: failed.outcome.message || "An export failed (see app logs)" });
+          if (clips.every((clip) => clip?.outcome.outcome === "done")) {
+            return this.settle({ ms: Math.max(...clips.map((clip) => clip.at)) - this.start });
+          }
+          // Nobody resumes or retries here: a pause or an early end would never complete.
+          const state = this.states.get(this.batchId);
+          if (state?.state === "paused") return this.settle({ error: `Export paused (${state.reason}): ${state.message}` });
+          if (state?.state === "finished") {
+            const { summary } = state;
+            return this.settle({ error: `Export batch ended without every clip (failed ${summary.failed.length}, skipped ${summary.skipped.length}, cancelled ${summary.cancelled.length})` });
+          }
+        },
+        settle(result) {
+          this.result ??= result;
+          for (const wake of [...this.waiters]) wake();
+        },
+        /** The result, or after `ms` how long the export events have been quiet. */
+        wait(ms) {
+          return new Promise((resolve) => {
+            const wake = () => {
+              clearTimeout(timer);
+              this.waiters.delete(wake);
+              resolve(this.result ?? { quietMs: performance.now() - this.lastEventAt });
+            };
+            const timer = setTimeout(wake, ms);
+            this.waiters.add(wake);
+            if (this.result) wake();
+          });
+        },
+      };
+      watch.start = performance.now();
+      watch.batchId = (await window.__TAURI_INTERNALS__.invoke("start_export", { clip_ids: ids, settings })).batch_id;
+      watch.check();
+    }, { ids, settings });
+    const deadline = Date.now() + 1200000;
+    for (;;) {
+      const state = await app.page.evaluate((ms) => window.__perfExport.wait(ms), EXPORT_QUIET_MS);
+      if (state.error) throw new Error(state.error);
+      if (state.ms !== undefined) return state.ms;
+      if (Date.now() > deadline) throw new Error("Timed out after 1200000 ms waiting for export completion including FFmpeg process start");
+      if (state.quietMs < EXPORT_QUIET_MS) continue;
+      // The events went quiet: read the app's state, only to report a failure.
       const clips = (await snapshot()).project.clips.filter((c) => ids.includes(c.id));
       const failed = clips.find((c) => c.export_status === "failed");
-      if (failed) return { error: failed.last_export?.error ?? "An export failed (see app logs)" };
-      return clips.length === ids.length && clips.every((c) => c.export_status === "completed");
-    }, { timeout: 1200000, every: 100, what: "export completion including FFmpeg process start" });
-    if (completed.error) throw new Error(completed.error);
-    return performance.now() - start;
+      if (failed) throw new Error(failed.last_export?.error ?? "An export failed (see app logs)");
+      if (clips.length === ids.length && clips.every((c) => c.export_status === "completed")) {
+        throw new Error("The export completed, but its events never reached the page, so it was not timed");
+      }
+    }
   }
   try {
     const { spawnedAt } = await startMeasured(app, { executable, args: [seed] });
@@ -459,10 +531,10 @@ async function main() {
       } })).clip.id);
       const settings = { ...(await snapshot()).project.export_settings, output_dir: ws.out,
         cut_mode: "lossless", framing: "original", parallel_jobs: 1, on_conflict: "rename" };
-      record("lossless_ms", await exportBatch(ids, settings), `10 × ${clipSeconds} s, from start_export through persisted completed statuses`);
+      record("lossless_ms", await exportBatch(ids, settings), `10 × ${clipSeconds} s, from start_export to the last clip's completion event`);
       const one = [ids[0]];
       const vertical = { ...settings, cut_mode: "accurate", framing: "vertical_crop", output_resolution: "1080x1920", fps_cap: 60, encoder: "libx264" };
-      // Settings change marks old exports outdated before polling completion again.
+      // Save the new settings first; this marks the earlier exports outdated.
       await app.invoke("set_export_settings", { settings: vertical });
       record("vertical_software_x", clipSeconds / ((await exportBatch(one, vertical)) / 1000), "libx264, includes process startup");
       const hardware = (await app.invoke("detect_hw_encoders", { force: false })).find((e) => e.available);
