@@ -1021,3 +1021,72 @@ async fn exp04_mkv_with_ass_subtitles_and_font_attachments_exports_only_av() {
         }
     }
 }
+
+/// PRD 7.8: MP4 and MOV outputs are verified from their `moov` box, without an ffprobe run.
+/// The engine below has no working ffprobe, so every clip that finishes Done was verified by the
+/// reader. On the same real outputs (faststart re-encodes, Lossless with the index at the end
+/// and a lead-in, HEVC `hvc1` with B-frames, MOV with PCM) the reader reports ffprobe's codec,
+/// size, channels and container, and a duration well inside its 0.5 s margin of ffprobe's: the
+/// movie header holds the longest edit list, FFmpeg measures from the earliest stream start
+/// (0.079 s apart on the HEVC cut).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prd_7_8_mp4_and_mov_outputs_are_verified_from_the_moov_box() {
+    let sc = require_ffmpeg!();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let no_ffprobe = rustcut_runner::Sidecars {
+        ffmpeg: sc.ffmpeg.clone(),
+        ffprobe: tmp.path().join("missing-ffprobe.exe"),
+    };
+    let cases = [
+        (Fixture::FrameNumbered, Preset::Accurate, 2.0, 7.0, "mp4"),
+        (Fixture::FrameNumbered, Preset::Lossless, 3.0, 8.0, "mp4"),
+        (Fixture::HevcHlgRotated, Preset::Lossless, 0.5, 3.0, "mp4"),
+        (Fixture::PcmAudio, Preset::Lossless, 1.0, 3.0, "mov"),
+        (Fixture::Ramp16x9, Preset::Vcrop, 0.5, 1.5, "mp4"),
+    ];
+    for (fx, preset, a, b, ext) in cases {
+        let env = env(no_ffprobe.clone());
+        let src = fixture(fx);
+        let project = project_with(&src, &[(a, b, "moov")]);
+        let index =
+            (preset == Preset::Lossless).then(|| media_index(&src, project.source.start_time_sec));
+        let mut settings = env.settings();
+        settings.apply_preset(preset);
+        let sink = TestSink::new();
+        let summary = env.run(&project, &settings, index, &sink).await;
+        let clip = project.clips[0].id;
+        assert_eq!(
+            summary.done.len(),
+            1,
+            "{fx:?} {preset:?}: {:?}",
+            sink.outcome(clip)
+        );
+        let out = sink.done_path(clip);
+        assert_eq!(out.extension().unwrap(), ext, "{fx:?} {preset:?}");
+
+        let fast = rustcut_export::mp4_verify_report(&out).expect("moov readable");
+        let probe = std::process::Command::new(&sc.ffprobe)
+            .args(rustcut_ffmpeg::verify_args(&out))
+            .output()
+            .expect("run ffprobe");
+        let probe =
+            rustcut_ffmpeg::probe::parse_verify_json(&String::from_utf8_lossy(&probe.stdout), &out)
+                .expect("ffprobe report");
+        let (d_fast, d_probe) = (fast.duration_sec.unwrap(), probe.duration_sec.unwrap());
+        assert!(
+            (d_fast - d_probe).abs() < 0.25,
+            "{fx:?} {preset:?}: duration {d_fast} vs ffprobe {d_probe}"
+        );
+        assert_eq!(fast.video_codec, probe.video_codec, "{fx:?} {preset:?}");
+        assert_eq!(
+            (fast.width, fast.height),
+            (probe.width, probe.height),
+            "{fx:?} {preset:?}"
+        );
+        assert_eq!(
+            fast.audio_channels, probe.audio_channels,
+            "{fx:?} {preset:?}"
+        );
+        assert_eq!(fast.format_name, probe.format_name, "{fx:?} {preset:?}");
+    }
+}

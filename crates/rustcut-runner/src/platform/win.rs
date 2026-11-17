@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use tokio::process::{Child, Command};
-use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, INVALID_HANDLE_VALUE, WAIT_TIMEOUT};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
@@ -18,6 +20,7 @@ use windows_sys::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenProcess, OpenThread, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
@@ -57,7 +60,54 @@ pub(crate) fn adopt_child(child: &Child) -> io::Result<()> {
         let err = io::Error::last_os_error();
         tracing::warn!(%err, "could not add a sidecar to the Job Object; it may outlive a crash");
     }
+    resume_process(process, pid)
+}
+
+/// Lets a process created with `CREATE_SUSPENDED` run.
+///
+/// std does not expose the primary thread handle of a tokio child, so the thread has to be found.
+/// `NtResumeProcess` does that inside the kernel in one call. It is an ntdll export rather than a
+/// documented Win32 function, but it has been there since Windows XP and tools such as
+/// Sysinternals PsSuspend use it. Without it (or if it fails) the threads are found with a
+/// Toolhelp snapshot, which reads every thread on the system: about 45 ms per spawn with 5,700
+/// threads, measured on a laptop on 2026-11-17, against well under a millisecond.
+fn resume_process(process: HANDLE, pid: u32) -> io::Result<()> {
+    if let Some(nt_resume_process) = nt_resume_process() {
+        // SAFETY: `process` is the handle CreateProcess returned for our own child, which has
+        // PROCESS_ALL_ACCESS and so PROCESS_SUSPEND_RESUME; it stays open during the call.
+        let status = unsafe { nt_resume_process(process) };
+        if status >= 0 {
+            return Ok(());
+        }
+        tracing::debug!(
+            pid,
+            status = format_args!("{status:#010x}"),
+            "NtResumeProcess failed; resuming the sidecar through a thread snapshot"
+        );
+    }
     resume_threads(pid)
+}
+
+/// `NTSTATUS NTAPI NtResumeProcess(HANDLE ProcessHandle)`.
+type NtResumeProcessFn = unsafe extern "system" fn(HANDLE) -> i32;
+
+/// `NtResumeProcess` from ntdll, looked up once (`None` if ntdll does not export it).
+fn nt_resume_process() -> Option<NtResumeProcessFn> {
+    static FUNCTION: OnceLock<Option<NtResumeProcessFn>> = OnceLock::new();
+    *FUNCTION.get_or_init(|| {
+        let ntdll: Vec<u16> = "ntdll.dll\0".encode_utf16().collect();
+        // SAFETY: the name is NUL-terminated; ntdll is loaded in every Windows process.
+        let module = unsafe { GetModuleHandleW(ntdll.as_ptr()) };
+        if module.is_null() {
+            return None;
+        }
+        // SAFETY: a valid module handle and a NUL-terminated ASCII name.
+        let address = unsafe { GetProcAddress(module, c"NtResumeProcess".as_ptr().cast()) }?;
+        // SAFETY: the export has the signature of `NtResumeProcessFn`.
+        Some(unsafe {
+            std::mem::transmute::<unsafe extern "system" fn() -> isize, NtResumeProcessFn>(address)
+        })
+    })
 }
 
 fn job() -> Option<&'static OwnedHandle> {
@@ -99,8 +149,8 @@ fn create_job() -> io::Result<OwnedHandle> {
     Ok(job)
 }
 
-/// Resumes the threads of a process created with `CREATE_SUSPENDED` (std does not expose the
-/// primary thread handle, so the thread is found through a Toolhelp snapshot).
+/// Resumes the threads of a process created with `CREATE_SUSPENDED`, found through a Toolhelp
+/// snapshot of every thread on the system (the slow fallback of [`resume_process`]).
 fn resume_threads(pid: u32) -> io::Result<()> {
     // SAFETY: plain snapshot request; failure is reported as INVALID_HANDLE_VALUE.
     let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
@@ -220,4 +270,58 @@ fn image_path(process: &OwnedHandle) -> io::Result<PathBuf> {
     }
     buffer.truncate(len as usize);
     Ok(PathBuf::from(OsString::from_wide(&buffer)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    /// `cmd /c exit 7`, created suspended like every sidecar.
+    fn suspended_cmd() -> Child {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let mut command = Command::new(PathBuf::from(root).join("System32").join("cmd.exe"));
+        command
+            .args(["/d", "/c", "exit 7"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        configure(&mut command);
+        command.spawn().expect("cmd.exe starts")
+    }
+
+    async fn assert_runs_after(resume: impl FnOnce(&Child) -> io::Result<()>) {
+        let mut child = suspended_cmd();
+        let early = tokio::time::timeout(Duration::from_millis(300), child.wait()).await;
+        assert!(early.is_err(), "a suspended process cannot exit: {early:?}");
+        resume(&child).expect("resumed");
+        let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .expect("the process runs once resumed")
+            .expect("exit status");
+        assert_eq!(status.code(), Some(7));
+    }
+
+    #[test]
+    fn ntdll_exports_nt_resume_process() {
+        assert!(nt_resume_process().is_some());
+    }
+
+    #[tokio::test]
+    async fn resume_process_lets_a_suspended_child_run() {
+        assert_runs_after(|child| {
+            resume_process(
+                child.raw_handle().expect("handle"),
+                child.id().expect("pid"),
+            )
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_thread_snapshot_fallback_lets_a_suspended_child_run() {
+        assert_runs_after(|child| resume_threads(child.id().expect("pid"))).await;
+    }
 }

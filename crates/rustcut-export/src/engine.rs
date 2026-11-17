@@ -8,11 +8,11 @@ use crate::error::ExportError;
 use crate::journal::Journal;
 use crate::preflight::lossless_lead_in;
 use crate::sleep::SleepGuard;
-use rustcut_ffmpeg::probe::parse_verify_json;
+use crate::verify::{Expected, VERIFY_TOLERANCE_SEC, verify_output};
 use rustcut_ffmpeg::{
-    ContainerDecision, ExportCommand, FailureKind, JobSpec, MediaIndex, ProgressParser,
+    ContainerDecision, ExportCommand, FailureKind, JobSpec, MediaIndex, Muxer, ProgressParser,
     ProgressUpdate, ResolvedEncoder, build_export_command, classify_attempt, first_error_line,
-    fraction, lossless_container, verify_args,
+    fraction, lossless_container,
 };
 use rustcut_model::{
     BatchInfo, BatchState, BatchSummary, Clip, ClipFinished, ClipOutcome, ClipProgress,
@@ -21,7 +21,7 @@ use rustcut_model::{
     settings_hash,
 };
 use rustcut_naming::sanitize_component;
-use rustcut_runner::{CancelToken, Sidecars, StreamOptions, run_capture, run_streaming};
+use rustcut_runner::{CancelToken, Sidecars, StreamOptions, run_streaming};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -31,16 +31,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
-/// Verification tolerance of the output duration (PRD 7.8).
-pub const VERIFY_TOLERANCE_SEC: f64 = 1.0;
 /// Upper bound on the lossless lead-in when the media index is unknown.
 const UNKNOWN_LEAD_IN_MAX_SEC: f64 = 60.0;
 /// "Out of encoder sessions" re-queues per clip before falling back to libx264.
 const MAX_SESSION_RETRIES: u32 = 2;
 /// Minimum interval between progress events.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
-/// Timeout of the output probe.
-const VERIFY_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a failed or cancelled clip keeps retrying to delete its `.part` file.
 const DISCARD_RETRY: Duration = Duration::from_secs(10);
 
@@ -921,6 +917,7 @@ impl Batch {
         force_software: bool,
         log: &Path,
     ) -> Attempt {
+        let started = Instant::now();
         let id = item.clip.id;
         let final_planned = PathBuf::from(&item.planned.output_path);
         if !Path::new(&self.info.output_dir).is_dir() {
@@ -972,6 +969,7 @@ impl Batch {
             ..StreamOptions::default()
         };
         let args = cmd.to_args();
+        let spawning = Instant::now();
         let run = run_streaming(
             &self.shared.config.sidecars.ffmpeg,
             &args,
@@ -1021,7 +1019,8 @@ impl Batch {
                 tail: outcome.stderr_tail,
             });
         }
-        if let Err(message) = self.verify(&part, item).await {
+        let exited = Instant::now();
+        if let Err(message) = self.verify(&part, cmd.muxer, item).await {
             self.discard_part(&part).await;
             return Attempt::Failed(Failure {
                 kind: FailureKind::Other,
@@ -1030,10 +1029,21 @@ impl Batch {
                 tail: outcome.stderr_tail,
             });
         }
+        let verified = Instant::now();
         match self.finalize(&part, &final_planned, item.planned.action) {
             Ok(Some(path)) => {
                 let _ = self.shared.journal.remove(&part);
                 let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                // Where the clip's time went outside FFmpeg (RUST_LOG=info,rustcut_export=debug).
+                let ms = |d: Duration| (d.as_secs_f64() * 10_000.0).round() / 10.0;
+                tracing::debug!(
+                    prepare_ms = ms(spawning - started),
+                    spawn_ms = ms((exited - spawning).saturating_sub(outcome.elapsed)),
+                    ffmpeg_ms = ms(outcome.elapsed),
+                    verify_ms = ms(verified - exited),
+                    finalize_ms = ms(verified.elapsed()),
+                    "export attempt timing"
+                );
                 Attempt::Done { path, size }
             }
             Ok(None) => {
@@ -1064,39 +1074,16 @@ impl Batch {
     }
 
     /// Success verification (PRD 7.8): a video stream and the expected duration.
-    async fn verify(&self, part: &Path, item: &WorkItem) -> Result<(), String> {
-        let args = verify_args(part);
-        let out = run_capture(&self.shared.config.sidecars.ffprobe, &args, VERIFY_TIMEOUT)
-            .await
-            .map_err(|e| format!("The exported file could not be checked: {e}"))?;
-        if !out.success() {
-            let err = out.stderr_lossy();
-            return Err(format!(
-                "The exported file is unreadable: {}",
-                first_error_line(&err).unwrap_or_else(|| "ffprobe rejected it".to_string())
-            ));
-        }
-        let report = parse_verify_json(&out.stdout_lossy(), part)
-            .map_err(|e| format!("The exported file could not be checked: {e}"))?;
-        if report.video_codec.is_none() {
-            return Err("The exported file contains no video stream".into());
-        }
-        let actual = report
-            .duration_sec
-            .filter(|d| *d > 0.0)
-            .ok_or("The exported file has no duration")?;
-        let expected = item.expected_sec();
-        let upper = if item.lead_in.is_some() {
-            VERIFY_TOLERANCE_SEC
-        } else {
-            UNKNOWN_LEAD_IN_MAX_SEC
+    async fn verify(&self, part: &Path, muxer: Muxer, item: &WorkItem) -> Result<(), String> {
+        let expected = Expected {
+            sec: item.expected_sec(),
+            upper_tolerance: if item.lead_in.is_some() {
+                VERIFY_TOLERANCE_SEC
+            } else {
+                UNKNOWN_LEAD_IN_MAX_SEC
+            },
         };
-        if actual < expected - VERIFY_TOLERANCE_SEC || actual > expected + upper {
-            return Err(format!(
-                "The exported file is {actual:.1} s long but about {expected:.1} s were expected (tolerance 1 s)"
-            ));
-        }
-        Ok(())
+        verify_output(&self.shared.config.sidecars.ffprobe, part, muxer, expected).await
     }
 
     /// Atomic `.part` -> final rename honouring the conflict policy. `Ok(None)`:

@@ -174,7 +174,8 @@ crates consume. Each crate documents its public API in rustdoc.
 * `Sidecars::locate()` — `RUSTCUT_FFMPEG_DIR`, next to the executable (bundled
   `ffmpeg[.exe]` and dev `ffmpeg-<triple>[.exe]`), `PATH`, WinGet Gyan dir.
 * `spawn` with stdin null, piped stdout/stderr, `CREATE_NO_WINDOW`, every child in a
-  process-wide Job Object with `KILL_ON_JOB_CLOSE` (Windows); `PR_SET_PDEATHSIG`
+  process-wide Job Object with `KILL_ON_JOB_CLOSE` (Windows: created suspended, put in the job,
+  then resumed with one `NtResumeProcess` call); `PR_SET_PDEATHSIG`
   (Linux); macOS: PIDs reported to the caller for journaling.
 * `run_capture(program, args, timeout) -> Output` (ffprobe), and
   `run_ffmpeg(args, opts) -> RunOutcome` streaming `ProgressUpdate`s to a callback,

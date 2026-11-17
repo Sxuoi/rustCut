@@ -8,6 +8,9 @@
 //!   project store.
 //! * [`cleanup_stale`] removes stale `.part` files and orphaned FFmpeg processes
 //!   at startup (PRD 7.8, 8.2).
+//! * Every output is verified before its `.part` is renamed (PRD 7.8): MP4/MOV
+//!   files from their `moov` box ([`mp4_verify_report`]), everything else and
+//!   every doubtful case with ffprobe.
 //! * [`SleepGuard`] blocks system sleep while a batch runs (EXP-14).
 
 #![warn(missing_docs)]
@@ -18,10 +21,10 @@ mod journal;
 mod platform;
 mod preflight;
 mod sleep;
+mod verify;
 
 pub use engine::{
-    BatchRequest, EngineConfig, ExportEngine, ExportSink, VERIFY_TOLERANCE_SEC, fresh_path,
-    part_path, resolve_encoder,
+    BatchRequest, EngineConfig, ExportEngine, ExportSink, fresh_path, part_path, resolve_encoder,
 };
 pub use error::ExportError;
 pub use journal::{JOURNAL_FILE, Journal, JournalEntry, cleanup_stale, cleanup_stale_with};
@@ -34,3 +37,4 @@ pub use preflight::{
     preflight, required_free_bytes,
 };
 pub use sleep::SleepGuard;
+pub use verify::{VERIFY_TOLERANCE_SEC, mp4_verify_report};

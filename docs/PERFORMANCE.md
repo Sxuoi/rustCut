@@ -579,3 +579,92 @@ and conditions (debug build, busy CPU), 2026-11-14: **passed**. 1,000 iterations
 5–400 ms (seed 1794592321188216100), 602 of them mid-save, 10,417 edits in total; maximum edit
 loss 824 ms (PRD: ≤ 1 s; the test's assertion bound is 1.3 s, see `MAX_LOSS` in the test), zero
 transient save failures, every project file readable after every kill. Run time 597 s.
+
+### Export time around FFmpeg: timed phases, 2026-11-17
+
+What it checks: the framed-preset sessions of 2026-11-16 and 2026-11-17 (sections "Square presets
+(FRM-09)" and "Vertical Blur with stacked bands (chain E)") found every 60 s export 1.5–2.5 s
+slower through the app than the same FFmpeg command run on its own (2–3 s on 2026-11-16). This
+times each step between `start_export` and the clip's `completed` status, removes what the engine
+added, and says where the rest of the gap came from.
+
+Method: release builds (`npx tauri build --no-bundle`, sidecars next to `rustcut.exe`) of main
+1d8afff with temporary log events at every step of `start_export` and the engine, then the same
+code with the two fixes below, then the committed code, whose debug line (end of this section)
+reports the per-clip phases. Same laptop as the full run above, window visible, no other export,
+build or test running. Source: 60 s of `perf.mjs`'s full-mode recipe (1080p60 `testsrc2`, 8 Mbps
+CBR H.264, 2 s GOP, AAC); Vertical Crop with `h264_amf` and a 60 s Lossless copy, one job. A probe
+script (`overhead-probe.mjs`, kept with the session notes, not in the repo) starts each export the
+way the earlier probe did (`start_export`, then `get_snapshot` every 100 ms until `completed`) and
+lines the log events up with it. Right after each export through the app it runs the identical
+FFmpeg command, taken from the clip's log, directly from Node with the same pipes, so every
+app/direct pair saw the same machine.
+
+| Step | Before (13 exports) | With the fixes (6 exports) |
+| :--- | :--- | :--- |
+| `start_export` reaching Rust (probe, WebView, IPC) | 4–8 ms | 4–12 ms |
+| Pre-flight, store update, engine start | 2–4 ms | 2–3 ms |
+| Journal entry before the spawn (temp file, `sync_all`, rename) | 2–21 ms | 2–21 ms |
+| Starting FFmpeg | 53–85 ms | 7–15 ms |
+| FFmpeg itself, spawn to exit: Vertical Crop / Lossless | 11.2–13.0 s / 0.14–0.16 s | 11.4–12.2 s / 0.13–0.15 s |
+| Verifying the output | 111–140 ms | 0.3–2.9 ms |
+| Rename of the `.part`, journal entry removed | 2–21 ms | 7–29 ms |
+| Status update (store, patch, events) | 0.2–0.5 ms | 0.2–0.6 ms |
+| **Engine time outside FFmpeg** | **198–255 ms (mean 225)** | **40–65 ms (mean 52)** |
+| Probe's polling lag after `completed` | 6–117 ms | 59–103 ms |
+
+The committed build (14 more exports, debug line instead of the temporary events): 28–88 ms
+outside FFmpeg (mean 46), of which starting FFmpeg 6.5–16 ms and verification 0.3–3.7 ms.
+
+Two costs were avoidable and are gone:
+
+- **Starting a sidecar.** Every FFmpeg and ffprobe process is created suspended, so that it is
+  inside the kill-on-close Job Object before it runs (PRD §8.2). It was then resumed by finding
+  its thread in a Toolhelp snapshot of every thread on the system: 9–12 ms for the snapshot and
+  34–39 ms to walk 5,700 threads (measured in Rust, more while other tests ran), against 4–9 ms
+  for `CreateProcess` itself. `NtResumeProcess` resumes the process in one call, well under
+  0.1 ms; the snapshot stays as the fallback. A whole `ffmpeg -version` run through RustCut's
+  spawn path took 107–144 ms before and 57–64 ms after (103 ms once, cold), the same as a plain
+  spawn (52–73 ms). This applies to every sidecar the app starts: the probe at open, the media
+  index, the waveform, the AMF test encode, every export.
+- **Verifying the output.** ffprobe on the finished file took 111–140 ms from the app. Run
+  directly, `ffprobe -version` alone takes about 60 ms (the static 227 MB sidecar) and the
+  verification call about 95 ms on a just-written file. MP4 and MOV outputs (every re-encode, and
+  Lossless whenever the codecs fit MP4) are now verified in-process from the `moov` box: the movie
+  header's duration and the tracks' handlers and sample entries, in under 4 ms. The movie header
+  holds the longest track's edit list, while ffprobe measures from the earliest stream start
+  (3.167 s against 3.088 s on an HEVC Lossless cut with B-frames and primed audio), so the reader
+  passes a file only when its duration lies at least 0.5 s inside the ±1 s tolerance. Other
+  containers, fragmented or damaged files, durations near the edge of the tolerance and every
+  failure still go to ffprobe. A test exports five real cases (faststart re-encode, Lossless with
+  the index at the end and a lead-in, HEVC `hvc1`, MOV with PCM, Vertical Crop) with no ffprobe
+  available and checks the reader against ffprobe's report on each.
+
+Effect: a 60 s Lossless export took 380–496 ms from `start_export` to `completed` before and
+260–261 ms with the committed build, FFmpeg's own share being 0.13–0.16 s. The engine's overhead
+used to exceed the stream copy itself; now about 50 ms remain per clip. On a 60 s Vertical Crop with AMF the saving
+(about 0.18 s) is 1.5% of the export, smaller than the run-to-run variation.
+
+Where the 1.5–2.5 s came from, besides those 0.2 s of engine time:
+
+- **FFmpeg's own run time varies.** The direct runs of the same Vertical Crop command took
+  10.98–12.67 s within an hour (23 runs), FFmpeg inside the app 11.20–13.02 s. The earlier sessions
+  ran the direct commands first and the app exports afterwards, so the machine's drift landed in
+  the app's column. Paired back to back, the app's total minus the direct run ranged from −0.31 to
+  +1.92 s, the engine's share staying near 0.2 s throughout.
+- **The probe's polling slows FFmpeg.** With `get_snapshot` every 100 ms (as in speed-probe.mjs and
+  `scripts/perf.mjs`), FFmpeg ran a median 0.28 s longer from the app than directly (mean 0.32 s,
+  13 of 17 pairs slower). Polling every second, the median was 0.04 s (6 pairs). The app's UI does
+  not poll during an export (progress arrives as events), so users do not pay this; the
+  measurements did, plus the polling lag itself (6–117 ms). Lossless pairs, where FFmpeg runs for
+  0.15 s, differed by −43 to +3 ms.
+
+Still in the engine's 28–88 ms: the journal entry before the spawn (2–30 ms, mostly `sync_all`),
+kept on purpose because it records the `.part` before FFmpeg creates it so the next start can
+remove it after a crash (PRD §7.8); creating the process of the 227 MB static sidecar
+(6.5–16 ms); the rename (5–9 ms).
+
+Timing log: with `RUST_LOG=info,rustcut_export=debug` the daily log gets one line per exported
+clip, `export attempt timing prepare_ms=… spawn_ms=… ffmpeg_ms=… verify_ms=… finalize_ms=…`
+(`prepare`: from the attempt's start to the spawn, journal entry included; `spawn`: time in the
+runner outside FFmpeg's own lifetime; `finalize`: rename and journal update).
